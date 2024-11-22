@@ -28,12 +28,13 @@
   <script type="module">
     import * as THREE from 'https://unpkg.com/three@0.150.1/build/three.module.js';
     import { ARButton } from 'https://unpkg.com/three@0.150.1/examples/jsm/webxr/ARButton.js';
+    import { GLTFLoader } from 'https://unpkg.com/three@0.150.1/examples/jsm/loaders/GLTFLoader.js';
+    import { DRACOLoader } from 'https://unpkg.com/three@0.150.1/examples/jsm/loaders/DRACOLoader.js';
 
     let camera, scene, renderer;
-    let particles;
+    let particles, abstraction, lightBeams, orbitObjects;
     let analyser;
     let dataArray;
-    let pulseLight;
     let clock = new THREE.Clock();
 
     init();
@@ -52,10 +53,6 @@
       // Lys
       const ambientLight = new THREE.AmbientLight(0x404040);
       scene.add(ambientLight);
-
-      pulseLight = new THREE.PointLight(0xffffff, 1, 10);
-      pulseLight.position.set(0, 0, -2);
-      scene.add(pulseLight);
 
       // Event listener for "Start AR"-knappen
       document.getElementById('start-button').addEventListener('click', () => {
@@ -93,10 +90,14 @@
         source.connect(analyser);
       });
 
-      // Opret og placer partikler
+      // Opret objekter
       createParticles();
+      createAbstraction();
+      createLightBeams();
+      createOrbitObjects();
     }
 
+    // --- Forbedrede partikler ---
     function createParticles() {
       const particleCount = 1000;
       const particlesGeometry = new THREE.BufferGeometry();
@@ -106,7 +107,6 @@
       const radius = 2; // 2 meter radius omkring brugeren
 
       for (let i = 0; i < particleCount; i++) {
-        // Generer en position på overfladen af en kugle
         const phi = Math.acos(2 * Math.random() - 1);
         const theta = 2 * Math.PI * Math.random();
 
@@ -136,6 +136,66 @@
       scene.add(particles);
     }
 
+    // --- Flydende abstraktion ---
+    function createAbstraction() {
+      const geometry = new THREE.PlaneGeometry(6, 6, 64, 64);
+      const material = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.5,
+        wireframe: true,
+      });
+
+      abstraction = new THREE.Mesh(geometry, material);
+      abstraction.position.set(0, 0, -3); // 3 meter foran brugeren
+      scene.add(abstraction);
+    }
+
+    // --- Lysstråler ---
+    function createLightBeams() {
+      lightBeams = [];
+
+      for (let i = 0; i < 8; i++) {
+        const geometry = new THREE.ConeGeometry(0.1, 2, 32);
+        const material = new THREE.MeshBasicMaterial({
+          color: 0xffffff,
+          transparent: true,
+          opacity: 0.5,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        });
+
+        const cone = new THREE.Mesh(geometry, material);
+        cone.position.set(0, -1, -2);
+        cone.rotation.z = (i / 8) * Math.PI * 2;
+        cone.rotation.x = Math.PI;
+        scene.add(cone);
+        lightBeams.push(cone);
+      }
+    }
+
+    // --- Objekter, der kredser om brugeren ---
+    function createOrbitObjects() {
+      orbitObjects = [];
+
+      const orbitCount = 12;
+      const radius = 2; // 2 meter radius omkring brugeren
+
+      for (let i = 0; i < orbitCount; i++) {
+        const angle = (i / orbitCount) * Math.PI * 2;
+        const x = radius * Math.cos(angle);
+        const z = radius * Math.sin(angle);
+
+        const geometry = new THREE.SphereGeometry(0.1, 16, 16);
+        const material = new THREE.MeshStandardMaterial({ color: 0xffffff });
+        const sphere = new THREE.Mesh(geometry, material);
+        sphere.position.set(x, 0, z);
+        scene.add(sphere);
+        orbitObjects.push({ mesh: sphere, angle: angle });
+      }
+    }
+
     function render() {
       const delta = clock.getDelta();
 
@@ -146,26 +206,54 @@
         // Normaliseret intensitet
         const intensity = avgFrequency / 255;
 
-        // Opdater partikler
+        // --- Forbedrede partikler ---
         const colors = particles.geometry.attributes.color.array;
-
         for (let i = 0; i < colors.length / 3; i++) {
-          // Pulserende effekt
           const pulse = 0.5 + 0.5 * Math.sin(clock.elapsedTime * 5 + i);
-
-          colors[i * 3] = intensity * pulse;        // Rød kanal
-          colors[i * 3 + 1] = (1 - intensity) * pulse; // Grøn kanal
-          colors[i * 3 + 2] = 0.5 * pulse;         // Blå kanal
+          colors[i * 3] = intensity * pulse;
+          colors[i * 3 + 1] = (1 - intensity) * pulse;
+          colors[i * 3 + 2] = 0.5 * pulse;
         }
-
         particles.geometry.attributes.color.needsUpdate = true;
-
-        // Rotér partiklerne langsomt omkring brugeren
         particles.rotation.y += 0.1 * delta * (0.5 + intensity);
-      }
 
-      // Pulseffekt på lyset
-      pulseLight.intensity = 1 + intensity * 5; // Forstærker effekten
+        // --- Flydende abstraktion ---
+        abstraction.material.color.setHSL(intensity, 1, 0.5);
+        abstraction.rotation.z += 0.05 * delta * (0.5 + intensity);
+
+        // Opret bølgende effekt på abstraktionens geometri
+        const positions = abstraction.geometry.attributes.position.array;
+        const time = clock.elapsedTime;
+        for (let i = 0; i < positions.length; i += 3) {
+          const x = positions[i];
+          const y = positions[i + 1];
+          positions[i + 2] = 0.5 * Math.sin(x * 2 + time + intensity) + 0.5 * Math.sin(y * 2 + time + intensity);
+        }
+        abstraction.geometry.attributes.position.needsUpdate = true;
+
+        // --- Lysstråler ---
+        lightBeams.forEach((beam, index) => {
+          beam.material.opacity = 0.2 + 0.8 * intensity;
+          beam.rotation.y = clock.elapsedTime * 0.5 + index;
+          beam.scale.y = 0.5 + intensity * 2;
+        });
+
+        // --- Objekter, der kredser om brugeren ---
+        orbitObjects.forEach((obj) => {
+          obj.angle += 0.5 * delta * (0.5 + intensity);
+          const x = 2 * Math.cos(obj.angle);
+          const z = 2 * Math.sin(obj.angle);
+          obj.mesh.position.set(x, 0, z);
+          obj.mesh.rotation.y += delta * (1 + intensity);
+          obj.mesh.scale.setScalar(0.5 + 0.5 * intensity);
+          obj.mesh.material.color.setHSL(intensity, 1, 0.5);
+        });
+
+        // --- Intensitetsovergange med Slow-motion Moments ---
+        const speedFactor = 0.5 + intensity;
+        particles.rotation.y += 0.1 * delta * speedFactor;
+        abstraction.rotation.z += 0.05 * delta * speedFactor;
+      }
 
       renderer.render(scene, camera);
     }
