@@ -28,8 +28,6 @@
   <script type="module">
     import * as THREE from 'https://unpkg.com/three@0.150.1/build/three.module.js';
     import { ARButton } from 'https://unpkg.com/three@0.150.1/examples/jsm/webxr/ARButton.js';
-    import { GLTFLoader } from 'https://unpkg.com/three@0.150.1/examples/jsm/loaders/GLTFLoader.js';
-    import { DRACOLoader } from 'https://unpkg.com/three@0.150.1/examples/jsm/loaders/DRACOLoader.js';
 
     let camera, scene, renderer;
     let particles, abstraction, lightBeams, orbitObjects;
@@ -50,16 +48,13 @@
       renderer.xr.enabled = true;
       document.body.appendChild(renderer.domElement);
 
-      // Lys
-      const ambientLight = new THREE.AmbientLight(0x404040);
-      scene.add(ambientLight);
-
       // Event listener for "Start AR"-knappen
       document.getElementById('start-button').addEventListener('click', () => {
         if (navigator.xr) {
           navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
             if (supported) {
               const sessionInit = { optionalFeatures: ['dom-overlay'], domOverlay: { root: document.body } };
+              renderer.xr.setReferenceSpaceType('viewer'); // Ændret til 'viewer'
               navigator.xr.requestSession('immersive-ar', sessionInit).then(onSessionStarted);
             } else {
               alert('WebXR AR-session understøttes ikke på denne enhed.');
@@ -72,7 +67,6 @@
     }
 
     function onSessionStarted(session) {
-      renderer.xr.setReferenceSpaceType('local');
       renderer.xr.setSession(session);
       document.getElementById('start-button').style.display = 'none';
 
@@ -88,115 +82,137 @@
         const bufferLength = analyser.frequencyBinCount;
         dataArray = new Uint8Array(bufferLength);
         source.connect(analyser);
+      }).catch((error) => {
+        console.error('Fejl ved adgang til mikrofonen:', error);
       });
 
       // Opret objekter
-      createParticles();
-      createAbstraction();
-      createLightBeams();
-      createOrbitObjects();
+      try {
+        createParticles();
+        createAbstraction();
+        createLightBeams();
+        createOrbitObjects();
+      } catch (e) {
+        console.error('Fejl under oprettelse af objekter:', e);
+      }
     }
 
     // --- Forbedrede partikler ---
     function createParticles() {
-      const particleCount = 1000;
-      const particlesGeometry = new THREE.BufferGeometry();
-      const positions = [];
-      const colors = [];
+      try {
+        const particleCount = 500; // Reduceret for ydeevne
+        const particlesGeometry = new THREE.BufferGeometry();
+        const positions = [];
+        const colors = [];
 
-      const radius = 2; // 2 meter radius omkring brugeren
+        const radius = 2; // 2 meter radius omkring brugeren
 
-      for (let i = 0; i < particleCount; i++) {
-        const phi = Math.acos(2 * Math.random() - 1);
-        const theta = 2 * Math.PI * Math.random();
+        for (let i = 0; i < particleCount; i++) {
+          const phi = Math.acos(2 * Math.random() - 1);
+          const theta = 2 * Math.PI * Math.random();
 
-        const x = radius * Math.sin(phi) * Math.cos(theta);
-        const y = radius * Math.sin(phi) * Math.sin(theta);
-        const z = radius * Math.cos(phi);
+          const x = radius * Math.sin(phi) * Math.cos(theta);
+          const y = radius * Math.sin(phi) * Math.sin(theta);
+          const z = radius * Math.cos(phi);
 
-        positions.push(x, y, z);
+          positions.push(x, y, z);
 
-        // Initial farve (hvid)
-        colors.push(1.0, 1.0, 1.0);
-      }
+          // Initial farve (hvid)
+          colors.push(1.0, 1.0, 1.0);
+        }
 
-      particlesGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-      particlesGeometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+        particlesGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        particlesGeometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
 
-      const particlesMaterial = new THREE.PointsMaterial({
-        size: 0.05,
-        vertexColors: true,
-        transparent: true,
-        opacity: 0.8,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      });
-
-      particles = new THREE.Points(particlesGeometry, particlesMaterial);
-      scene.add(particles);
-    }
-
-    // --- Flydende abstraktion ---
-    function createAbstraction() {
-      const geometry = new THREE.PlaneGeometry(6, 6, 64, 64);
-      const material = new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        side: THREE.DoubleSide,
-        transparent: true,
-        opacity: 0.5,
-        wireframe: true,
-      });
-
-      abstraction = new THREE.Mesh(geometry, material);
-      abstraction.position.set(0, 0, -3); // 3 meter foran brugeren
-      scene.add(abstraction);
-    }
-
-    // --- Lysstråler ---
-    function createLightBeams() {
-      lightBeams = [];
-
-      for (let i = 0; i < 8; i++) {
-        const geometry = new THREE.ConeGeometry(0.1, 2, 32);
-        const material = new THREE.MeshBasicMaterial({
-          color: 0xffffff,
+        const particlesMaterial = new THREE.PointsMaterial({
+          size: 0.05,
+          vertexColors: true,
           transparent: true,
-          opacity: 0.5,
+          opacity: 0.8,
           blending: THREE.AdditiveBlending,
           depthWrite: false,
         });
 
-        const cone = new THREE.Mesh(geometry, material);
-        cone.position.set(0, -1, -2);
-        cone.rotation.z = (i / 8) * Math.PI * 2;
-        cone.rotation.x = Math.PI;
-        scene.add(cone);
-        lightBeams.push(cone);
+        particles = new THREE.Points(particlesGeometry, particlesMaterial);
+        scene.add(particles);
+      } catch (e) {
+        console.error('Fejl under oprettelse af partikler:', e);
+      }
+    }
+
+    // --- Flydende abstraktion ---
+    function createAbstraction() {
+      try {
+        const geometry = new THREE.PlaneGeometry(6, 6, 32, 32); // Reduceret segmenter
+        const material = new THREE.MeshBasicMaterial({
+          color: 0xffffff,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.5,
+          wireframe: true,
+        });
+
+        abstraction = new THREE.Mesh(geometry, material);
+        abstraction.position.set(0, 0, -3); // 3 meter foran brugeren
+        scene.add(abstraction);
+      } catch (e) {
+        console.error('Fejl under oprettelse af abstraktion:', e);
+      }
+    }
+
+    // --- Lysstråler ---
+    function createLightBeams() {
+      try {
+        lightBeams = [];
+
+        for (let i = 0; i < 8; i++) {
+          const geometry = new THREE.ConeGeometry(0.1, 2, 16); // Reduceret segmenter
+          const material = new THREE.MeshBasicMaterial({
+            color: 0xffffff,
+            transparent: true,
+            opacity: 0.5,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+          });
+
+          const cone = new THREE.Mesh(geometry, material);
+          cone.position.set(0, -1, -2);
+          cone.rotation.z = (i / 8) * Math.PI * 2;
+          cone.rotation.x = Math.PI;
+          scene.add(cone);
+          lightBeams.push(cone);
+        }
+      } catch (e) {
+        console.error('Fejl under oprettelse af lysstråler:', e);
       }
     }
 
     // --- Objekter, der kredser om brugeren ---
     function createOrbitObjects() {
-      orbitObjects = [];
+      try {
+        orbitObjects = [];
 
-      const orbitCount = 12;
-      const radius = 2; // 2 meter radius omkring brugeren
+        const orbitCount = 8; // Reduceret antal for ydeevne
+        const radius = 2; // 2 meter radius omkring brugeren
 
-      for (let i = 0; i < orbitCount; i++) {
-        const angle = (i / orbitCount) * Math.PI * 2;
-        const x = radius * Math.cos(angle);
-        const z = radius * Math.sin(angle);
+        for (let i = 0; i < orbitCount; i++) {
+          const angle = (i / orbitCount) * Math.PI * 2;
+          const x = radius * Math.cos(angle);
+          const z = radius * Math.sin(angle);
 
-        const geometry = new THREE.SphereGeometry(0.1, 16, 16);
-        const material = new THREE.MeshStandardMaterial({ color: 0xffffff });
-        const sphere = new THREE.Mesh(geometry, material);
-        sphere.position.set(x, 0, z);
-        scene.add(sphere);
-        orbitObjects.push({ mesh: sphere, angle: angle });
+          const geometry = new THREE.SphereGeometry(0.1, 8, 8); // Reduceret segmenter
+          const material = new THREE.MeshStandardMaterial({ color: 0xffffff });
+          const sphere = new THREE.Mesh(geometry, material);
+          sphere.position.set(x, 0, z);
+          scene.add(sphere);
+          orbitObjects.push({ mesh: sphere, angle: angle });
+        }
+      } catch (e) {
+        console.error('Fejl under oprettelse af orbit-objekter:', e);
       }
     }
 
-    function render() {
+    function render(timestamp, frame) {
       const delta = clock.getDelta();
 
       if (analyser) {
@@ -207,52 +223,55 @@
         const intensity = avgFrequency / 255;
 
         // --- Forbedrede partikler ---
-        const colors = particles.geometry.attributes.color.array;
-        for (let i = 0; i < colors.length / 3; i++) {
-          const pulse = 0.5 + 0.5 * Math.sin(clock.elapsedTime * 5 + i);
-          colors[i * 3] = intensity * pulse;
-          colors[i * 3 + 1] = (1 - intensity) * pulse;
-          colors[i * 3 + 2] = 0.5 * pulse;
+        if (particles && particles.geometry && particles.geometry.attributes.color) {
+          const colors = particles.geometry.attributes.color.array;
+          for (let i = 0; i < colors.length / 3; i++) {
+            const pulse = 0.5 + 0.5 * Math.sin(clock.elapsedTime * 5 + i);
+            colors[i * 3] = intensity * pulse;
+            colors[i * 3 + 1] = (1 - intensity) * pulse;
+            colors[i * 3 + 2] = 0.5 * pulse;
+          }
+          particles.geometry.attributes.color.needsUpdate = true;
+          particles.rotation.y += 0.1 * delta * (0.5 + intensity);
         }
-        particles.geometry.attributes.color.needsUpdate = true;
-        particles.rotation.y += 0.1 * delta * (0.5 + intensity);
 
         // --- Flydende abstraktion ---
-        abstraction.material.color.setHSL(intensity, 1, 0.5);
-        abstraction.rotation.z += 0.05 * delta * (0.5 + intensity);
+        if (abstraction && abstraction.geometry && abstraction.geometry.attributes.position) {
+          abstraction.material.color.setHSL(intensity, 1, 0.5);
+          abstraction.rotation.z += 0.05 * delta * (0.5 + intensity);
 
-        // Opret bølgende effekt på abstraktionens geometri
-        const positions = abstraction.geometry.attributes.position.array;
-        const time = clock.elapsedTime;
-        for (let i = 0; i < positions.length; i += 3) {
-          const x = positions[i];
-          const y = positions[i + 1];
-          positions[i + 2] = 0.5 * Math.sin(x * 2 + time + intensity) + 0.5 * Math.sin(y * 2 + time + intensity);
+          // Bølgende effekt
+          const positions = abstraction.geometry.attributes.position.array;
+          const time = clock.elapsedTime;
+          for (let i = 0; i < positions.length; i += 3) {
+            const x = positions[i];
+            const y = positions[i + 1];
+            positions[i + 2] = 0.5 * Math.sin(x * 2 + time + intensity) + 0.5 * Math.sin(y * 2 + time + intensity);
+          }
+          abstraction.geometry.attributes.position.needsUpdate = true;
         }
-        abstraction.geometry.attributes.position.needsUpdate = true;
 
         // --- Lysstråler ---
-        lightBeams.forEach((beam, index) => {
-          beam.material.opacity = 0.2 + 0.8 * intensity;
-          beam.rotation.y = clock.elapsedTime * 0.5 + index;
-          beam.scale.y = 0.5 + intensity * 2;
-        });
+        if (lightBeams) {
+          lightBeams.forEach((beam, index) => {
+            beam.material.opacity = 0.2 + 0.8 * intensity;
+            beam.rotation.y = clock.elapsedTime * 0.5 + index;
+            beam.scale.y = 0.5 + intensity * 2;
+          });
+        }
 
         // --- Objekter, der kredser om brugeren ---
-        orbitObjects.forEach((obj) => {
-          obj.angle += 0.5 * delta * (0.5 + intensity);
-          const x = 2 * Math.cos(obj.angle);
-          const z = 2 * Math.sin(obj.angle);
-          obj.mesh.position.set(x, 0, z);
-          obj.mesh.rotation.y += delta * (1 + intensity);
-          obj.mesh.scale.setScalar(0.5 + 0.5 * intensity);
-          obj.mesh.material.color.setHSL(intensity, 1, 0.5);
-        });
-
-        // --- Intensitetsovergange med Slow-motion Moments ---
-        const speedFactor = 0.5 + intensity;
-        particles.rotation.y += 0.1 * delta * speedFactor;
-        abstraction.rotation.z += 0.05 * delta * speedFactor;
+        if (orbitObjects) {
+          orbitObjects.forEach((obj) => {
+            obj.angle += 0.5 * delta * (0.5 + intensity);
+            const x = 2 * Math.cos(obj.angle);
+            const z = 2 * Math.sin(obj.angle);
+            obj.mesh.position.set(x, 0, z);
+            obj.mesh.rotation.y += delta * (1 + intensity);
+            obj.mesh.scale.setScalar(0.5 + 0.5 * intensity);
+            obj.mesh.material.color.setHSL(intensity, 1, 0.5);
+          });
+        }
       }
 
       renderer.render(scene, camera);
