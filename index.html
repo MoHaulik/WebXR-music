@@ -27,7 +27,7 @@
   </div>
   <script type="module">
     import * as THREE from 'https://unpkg.com/three@0.150.1/build/three.module.js';
-    import { XRButton } from 'https://unpkg.com/three@0.150.1/examples/jsm/webxr/XRButton.js';
+    import { ARButton } from 'https://unpkg.com/three@0.150.1/examples/jsm/webxr/ARButton.js';
 
     let camera, scene, renderer;
     let circles = [];
@@ -47,18 +47,6 @@
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.xr.enabled = true;
       document.body.appendChild(renderer.domElement);
-
-      // Tilføj XR-knap
-      document.getElementById('start-button').addEventListener('click', () => {
-        navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
-          if (supported) {
-            renderer.xr.setReferenceSpaceType('local');
-            document.body.appendChild(XRButton.createButton(renderer, { requiredFeatures: ['hit-test'] }));
-          } else {
-            alert('WebXR ikke understøttet på denne enhed.');
-          }
-        });
-      });
 
       // Opret cirkler
       for (let i = 1; i <= 5; i++) {
@@ -97,7 +85,27 @@
         source.connect(analyser);
       });
 
-      renderer.setAnimationLoop(render);
+      // Event listener for "Start AR"-knappen
+      document.getElementById('start-button').addEventListener('click', () => {
+        if (navigator.xr) {
+          navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
+            if (supported) {
+              const sessionInit = { optionalFeatures: ['dom-overlay'], domOverlay: { root: document.body } };
+              navigator.xr.requestSession('immersive-ar', sessionInit).then((session) => {
+                renderer.xr.setSession(session);
+                document.getElementById('start-button').style.display = 'none';
+
+                // Start animationssløjfen efter XR-sessionen er startet
+                renderer.setAnimationLoop(render);
+              });
+            } else {
+              alert('WebXR AR-session understøttes ikke på denne enhed.');
+            }
+          });
+        } else {
+          alert('WebXR ikke understøttet i denne browser.');
+        }
+      });
     }
 
     function render() {
