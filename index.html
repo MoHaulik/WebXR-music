@@ -30,10 +30,11 @@
     import { ARButton } from 'https://unpkg.com/three@0.150.1/examples/jsm/webxr/ARButton.js';
 
     let camera, scene, renderer;
-    let circles = [];
     let particles;
     let analyser;
     let dataArray;
+    let pulseLight;
+    let clock = new THREE.Clock();
 
     init();
 
@@ -49,9 +50,12 @@
       document.body.appendChild(renderer.domElement);
 
       // Lys
-      const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
-      light.position.set(0.5, 1, 0.25);
-      scene.add(light);
+      const ambientLight = new THREE.AmbientLight(0x404040);
+      scene.add(ambientLight);
+
+      pulseLight = new THREE.PointLight(0xffffff, 1, 10);
+      pulseLight.position.set(0, 0, -2);
+      scene.add(pulseLight);
 
       // Event listener for "Start AR"-knappen
       document.getElementById('start-button').addEventListener('click', () => {
@@ -89,68 +93,79 @@
         source.connect(analyser);
       });
 
-      // Opret og placer objekter direkte foran brugeren
-      createObjects();
+      // Opret og placer partikler
+      createParticles();
     }
 
-    function createObjects() {
-      // Placeringsmatrix for objekterne
-      const position = new THREE.Vector3(0, 0, -2); // 2 meter foran brugeren
-      const quaternion = new THREE.Quaternion();
-      const scale = new THREE.Vector3(1, 1, 1);
-      const matrix = new THREE.Matrix4();
-      matrix.compose(position, quaternion, scale);
-
-      // Opret cirkler
-      for (let i = 1; i <= 5; i++) {
-        let geometry = new THREE.CircleGeometry(0.1 * i, 32);
-        let material = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, transparent: true });
-        let circle = new THREE.Mesh(geometry, material);
-
-        // Anvend matrixen for at placere cirklen
-        circle.applyMatrix4(matrix);
-
-        scene.add(circle);
-        circles.push(circle);
-      }
-
-      // Opret partikelsky
-      const particleCount = 500;
+    function createParticles() {
+      const particleCount = 1000;
       const particlesGeometry = new THREE.BufferGeometry();
-      const positions = new Float32Array(particleCount * 3);
+      const positions = [];
+      const colors = [];
+
+      const radius = 2; // 2 meter radius omkring brugeren
 
       for (let i = 0; i < particleCount; i++) {
-        positions[i * 3] = (Math.random() - 0.5) * 2;
-        positions[i * 3 + 1] = (Math.random() - 0.5) * 2;
-        positions[i * 3 + 2] = (Math.random() - 0.5) * 2;
+        // Generer en position på overfladen af en kugle
+        const phi = Math.acos(2 * Math.random() - 1);
+        const theta = 2 * Math.PI * Math.random();
+
+        const x = radius * Math.sin(phi) * Math.cos(theta);
+        const y = radius * Math.sin(phi) * Math.sin(theta);
+        const z = radius * Math.cos(phi);
+
+        positions.push(x, y, z);
+
+        // Initial farve (hvid)
+        colors.push(1.0, 1.0, 1.0);
       }
 
-      particlesGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      const particlesMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.02 });
+      particlesGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      particlesGeometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+
+      const particlesMaterial = new THREE.PointsMaterial({
+        size: 0.05,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.8,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+
       particles = new THREE.Points(particlesGeometry, particlesMaterial);
-
-      // Anvend matrixen for at placere partikelskyen
-      particles.applyMatrix4(matrix);
-
       scene.add(particles);
     }
 
     function render() {
+      const delta = clock.getDelta();
+
       if (analyser) {
         analyser.getByteFrequencyData(dataArray);
         const avgFrequency = dataArray.reduce((a, b) => a + b) / dataArray.length;
 
-        // Opdater cirkler
-        circles.forEach((circle, index) => {
-          const scale = 1 + dataArray[index] / 128;
-          circle.scale.set(scale, scale, scale);
-          circle.material.opacity = dataArray[index] / 255;
-          circle.material.color.setHSL(dataArray[index] / 255, 1, 0.5);
-        });
+        // Normaliseret intensitet
+        const intensity = avgFrequency / 255;
 
         // Opdater partikler
-        particles.rotation.y += 0.001 * avgFrequency;
+        const colors = particles.geometry.attributes.color.array;
+
+        for (let i = 0; i < colors.length / 3; i++) {
+          // Pulserende effekt
+          const pulse = 0.5 + 0.5 * Math.sin(clock.elapsedTime * 5 + i);
+
+          colors[i * 3] = intensity * pulse;        // Rød kanal
+          colors[i * 3 + 1] = (1 - intensity) * pulse; // Grøn kanal
+          colors[i * 3 + 2] = 0.5 * pulse;         // Blå kanal
+        }
+
+        particles.geometry.attributes.color.needsUpdate = true;
+
+        // Rotér partiklerne langsomt omkring brugeren
+        particles.rotation.y += 0.1 * delta * (0.5 + intensity);
       }
+
+      // Pulseffekt på lyset
+      pulseLight.intensity = 1 + intensity * 5; // Forstærker effekten
 
       renderer.render(scene, camera);
     }
