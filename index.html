@@ -1,238 +1,124 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
-  <head>
-    <meta charset='utf-8'>
-    <meta name='viewport' content='width=device-width, initial-scale=1, user-scalable=no'>
-    <meta name='mobile-web-app-capable' content='yes'>
-    <meta name='apple-mobile-web-app-capable' content='yes'>
-    <link rel='icon' type='image/png' sizes='32x32' href='favicon-32x32.png'>
-    <link rel='icon' type='image/png' sizes='96x96' href='favicon-96x96.png'>
-    <link rel='stylesheet' href='css/common.css'>
+<head>
+  <meta charset="utf-8">
+  <title>WebXR Musik Visualisering</title>
+  <meta name='viewport' content='width=device-width, initial-scale=1, user-scalable=no'>
+  <meta name='mobile-web-app-capable' content='yes'>
+  <meta name='apple-mobile-web-app-capable' content='yes'>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    #overlay {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      color: white;
+      z-index: 1;
+    }
+    #start-button {
+      padding: 10px 20px;
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div id="overlay">
+    <button id="start-button">Start AR</button>
+  </div>
+  <script type="module">
+    import * as THREE from 'https://unpkg.com/three@0.150.1/build/three.module.js';
+    import { XRButton } from 'https://unpkg.com/three@0.150.1/examples/jsm/webxr/XRButton.js';
 
-    <title>Interactive WebXR Experience</title>
+    let camera, scene, renderer;
+    let circles = [];
+    let particles;
+    let analyser;
+    let dataArray;
 
-    <!-- Include Three.js library -->
-    <script src="https://threejs.org/build/three.min.js"></script>
-  </head>
-  <body>
-    <div id="overlay">
-      <header>
-        <details open>
-          <summary>Interactive WebXR Experience</summary>
-          <p>
-            This experience features pulsating circles and particle effects that react to real-time music input from your microphone.
-            <a class="back" href="./index.html">Back</a>
-          </p>
-          <div id="session-info"></div>
-          <div id="pose"></div>
-          <div id="warning-zone"></div>
-          <button id="xr-button" class="barebones-button" disabled>XR not found</button>
-        </details>
-      </header>
-    </div>
-    <main style='text-align: center;'>
-      <p>Click 'Enter AR' to see content</p>
-    </main>
-    <script type="module">
-      // XR globals.
-      let xrButton = document.getElementById('xr-button');
-      let xrSession = null;
-      let xrRefSpace = null;
+    init();
 
-      // Three.js globals.
-      let renderer, scene, camera;
-      let circles = [];
-      let particles;
+    function init() {
+      // Scene og kamera
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
 
-      // WebGL context.
-      let gl = null;
+      // Renderer
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.xr.enabled = true;
+      document.body.appendChild(renderer.domElement);
 
-      // Audio globals.
-      let audioContext, analyser;
-
-      function checkSupportedState() {
+      // Tilføj XR-knap
+      document.getElementById('start-button').addEventListener('click', () => {
         navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
           if (supported) {
-            xrButton.innerHTML = 'Enter AR';
+            renderer.xr.setReferenceSpaceType('local');
+            document.body.appendChild(XRButton.createButton(renderer, { requiredFeatures: ['hit-test'] }));
           } else {
-            xrButton.innerHTML = 'AR not found';
+            alert('WebXR ikke understøttet på denne enhed.');
           }
-
-          xrButton.disabled = !supported;
         });
+      });
+
+      // Opret cirkler
+      for (let i = 1; i <= 5; i++) {
+        let geometry = new THREE.CircleGeometry(0.1 * i, 32);
+        let material = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, transparent: true });
+        let circle = new THREE.Mesh(geometry, material);
+        circle.position.set(0, 0, -2);
+        scene.add(circle);
+        circles.push(circle);
       }
 
-      function initXR() {
-        if (!window.isSecureContext) {
-          let message = "WebXR unavailable due to insecure context";
-          document.getElementById("warning-zone").innerText = message;
-        }
+      // Opret partikelsky
+      const particleCount = 500;
+      const particlesGeometry = new THREE.BufferGeometry();
+      const positions = new Float32Array(particleCount * 3);
 
-        if (navigator.xr) {
-          xrButton.addEventListener('click', onButtonClicked);
-          navigator.xr.addEventListener('devicechange', checkSupportedState);
-          checkSupportedState();
-        }
+      for (let i = 0; i < particleCount; i++) {
+        positions[i * 3] = (Math.random() - 0.5) * 2;
+        positions[i * 3 + 1] = (Math.random() - 0.5) * 2;
+        positions[i * 3 + 2] = (Math.random() - 0.5) * 2;
       }
 
-      function onButtonClicked() {
-        if (!xrSession) {
-          // Ask for an optional DOM Overlay
-          navigator.xr.requestSession('immersive-ar', {
-            optionalFeatures: ['dom-overlay'],
-            domOverlay: { root: document.getElementById('overlay') }
-          }).then(onSessionStarted, onRequestSessionError);
-        } else {
-          xrSession.end();
-        }
-      }
+      particlesGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      const particlesMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.02 });
+      particles = new THREE.Points(particlesGeometry, particlesMaterial);
+      scene.add(particles);
 
-      function onSessionStarted(session) {
-        xrSession = session;
-        xrButton.innerHTML = 'Exit AR';
-
-        // Show which type of DOM Overlay got enabled (if any)
-        if (session.domOverlayState) {
-          document.getElementById('session-info').innerHTML = 'DOM Overlay type: ' + session.domOverlayState.type;
-        }
-
-        session.addEventListener('end', onSessionEnded);
-        let canvas = document.createElement('canvas');
-        gl = canvas.getContext('webgl', { xrCompatible: true });
-        session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
-        session.requestReferenceSpace('local').then((refSpace) => {
-          xrRefSpace = refSpace;
-
-          // Initialize Three.js renderer
-          initThreeJs(canvas, session);
-
-          // Initialize audio input
-          initAudio();
-
-          // Start rendering loop
-          renderer.setAnimationLoop(onXRFrame);
-        });
-      }
-
-      function initThreeJs(canvas, session) {
-        // Renderer
-        renderer = new THREE.WebGLRenderer({
-          canvas: canvas,
-          context: gl
-        });
-        renderer.autoClear = false;
-        renderer.xr.enabled = true;
-        renderer.xr.setSession(session);
-
-        // Scene and camera
-        scene = new THREE.Scene();
-        camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
-
-        // Create objects
-        createConcentricCircles();
-        createParticles();
-      }
-
-      function createConcentricCircles() {
-        let numCircles = 5;
-        for (let i = 1; i <= numCircles; i++) {
-          let geometry = new THREE.CircleGeometry(i * 0.2, 32);
-          let material = new THREE.MeshBasicMaterial({
-            color: 0xffffff,
-            side: THREE.DoubleSide,
-            transparent: true,
-            opacity: 0.5
-          });
-          let circle = new THREE.Mesh(geometry, material);
-          circle.rotation.x = -Math.PI / 2;
-          scene.add(circle);
-          circles.push(circle);
-        }
-      }
-
-      function createParticles() {
-        let particlesCount = 500;
-        let positions = new Float32Array(particlesCount * 3);
-        for (let i = 0; i < particlesCount; i++) {
-          positions[i * 3 + 0] = (Math.random() - 0.5) * 4;
-          positions[i * 3 + 1] = (Math.random() - 0.5) * 4;
-          positions[i * 3 + 2] = (Math.random() - 0.5) * 4;
-        }
-        let geometry = new THREE.BufferGeometry();
-        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        let material = new THREE.PointsMaterial({ color: 0xffffff, size: 0.02 });
-        particles = new THREE.Points(geometry, material);
-        scene.add(particles);
-      }
-
-      function initAudio() {
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      // Opsæt lydanalyse
+      navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then((stream) => {
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const source = audioContext.createMediaStreamSource(stream);
         analyser = audioContext.createAnalyser();
         analyser.fftSize = 256;
+        const bufferLength = analyser.frequencyBinCount;
+        dataArray = new Uint8Array(bufferLength);
+        source.connect(analyser);
+      });
 
-        navigator.mediaDevices.getUserMedia({ audio: true })
-          .then(function (stream) {
-            let source = audioContext.createMediaStreamSource(stream);
-            source.connect(analyser);
-          })
-          .catch(function (err) {
-            console.error('Error accessing microphone', err);
-          });
-      }
+      renderer.setAnimationLoop(render);
+    }
 
-      function onRequestSessionError(ex) {
-        alert("Failed to start immersive AR session.");
-        console.error(ex.message);
-      }
-
-      function onEndSession(session) {
-        session.end();
-      }
-
-      function onSessionEnded(event) {
-        xrSession = null;
-        xrButton.innerHTML = 'Enter AR';
-        document.getElementById('session-info').innerHTML = '';
-        gl = null;
-      }
-
-      function onXRFrame(time, frame) {
-        // Bind the WebGL framebuffer
-        gl.bindFramebuffer(gl.FRAMEBUFFER, xrSession.renderState.baseLayer.framebuffer);
-
-        // Update audio data
-        let dataArray = new Uint8Array(analyser.frequencyBinCount);
+    function render() {
+      if (analyser) {
         analyser.getByteFrequencyData(dataArray);
+        const avgFrequency = dataArray.reduce((a, b) => a + b) / dataArray.length;
 
-        // Compute average frequency
-        let sum = 0;
-        for (let i = 0; i < dataArray.length; i++) {
-          sum += dataArray[i];
-        }
-        let average = sum / dataArray.length;
+        // Opdater cirkler
+        circles.forEach((circle, index) => {
+          const scale = 1 + dataArray[index] / 128;
+          circle.scale.set(scale, scale, scale);
+          circle.material.opacity = dataArray[index] / 255;
+          circle.material.color.setHSL(dataArray[index] / 255, 1, 0.5);
+        });
 
-        // Update visual elements
-        updateCircles(average);
-        updateParticles(average);
-
-        // Render the scene
-        renderer.render(scene, camera);
+        // Opdater partikler
+        particles.rotation.y += 0.001 * avgFrequency;
       }
 
-      function updateCircles(average) {
-        for (let i = 0; i < circles.length; i++) {
-          let scale = 1 + average / 128;
-          circles[i].scale.set(scale, scale, scale);
-          circles[i].material.opacity = 0.5 + (average / 512);
-          circles[i].material.color.setHSL((average / 512), 1, 0.5);
-        }
-      }
-
-      function updateParticles(average) {
-        particles.rotation.y += 0.005 * (average / 128);
-      }
-
-      initXR();
-    </script>
-  </body>
+      renderer.render(scene, camera);
+    }
+  </script>
+</body>
 </html>
