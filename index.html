@@ -34,16 +34,12 @@
     let particles;
     let analyser;
     let dataArray;
-    let reticle;
-    let controller;
 
     init();
 
     function init() {
       // Scene og kamera
       scene = new THREE.Scene();
-
-      // Kameraet initialiseres uden position, da det styres af XR-enheden
       camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
 
       // Renderer
@@ -62,7 +58,7 @@
         if (navigator.xr) {
           navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
             if (supported) {
-              const sessionInit = { requiredFeatures: ['hit-test'], optionalFeatures: ['dom-overlay'], domOverlay: { root: document.body } };
+              const sessionInit = { optionalFeatures: ['dom-overlay'], domOverlay: { root: document.body } };
               navigator.xr.requestSession('immersive-ar', sessionInit).then(onSessionStarted);
             } else {
               alert('WebXR AR-session understøttes ikke på denne enhed.');
@@ -75,6 +71,7 @@
     }
 
     function onSessionStarted(session) {
+      renderer.xr.setReferenceSpaceType('local');
       renderer.xr.setSession(session);
       document.getElementById('start-button').style.display = 'none';
 
@@ -92,34 +89,53 @@
         source.connect(analyser);
       });
 
-      // Kontroller til hit-test
-      controller = renderer.xr.getController(0);
-      scene.add(controller);
-
-      // Hit-test til at placere objekter i verden
-      session.requestReferenceSpace('viewer').then((referenceSpace) => {
-        session.requestHitTestSource({ space: referenceSpace }).then((source) => {
-          controller.userData.hitTestSource = source;
-        });
-      });
-
-      session.addEventListener('end', () => {
-        if (controller.userData.hitTestSource) {
-          controller.userData.hitTestSource.cancel();
-          controller.userData.hitTestSource = null;
-        }
-      });
-
-      // Reticle (sigtepunkt) for at vise hvor objekterne placeres
-      const geometry = new THREE.RingGeometry(0.05, 0.06, 32).rotateX(-Math.PI / 2);
-      const material = new THREE.MeshBasicMaterial({ color: 0xffffff });
-      reticle = new THREE.Mesh(geometry, material);
-      reticle.matrixAutoUpdate = false;
-      reticle.visible = false;
-      scene.add(reticle);
+      // Opret og placer objekter direkte foran brugeren
+      createObjects();
     }
 
-    function render(timestamp, frame) {
+    function createObjects() {
+      // Placeringsmatrix for objekterne
+      const position = new THREE.Vector3(0, 0, -2); // 2 meter foran brugeren
+      const quaternion = new THREE.Quaternion();
+      const scale = new THREE.Vector3(1, 1, 1);
+      const matrix = new THREE.Matrix4();
+      matrix.compose(position, quaternion, scale);
+
+      // Opret cirkler
+      for (let i = 1; i <= 5; i++) {
+        let geometry = new THREE.CircleGeometry(0.1 * i, 32);
+        let material = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, transparent: true });
+        let circle = new THREE.Mesh(geometry, material);
+
+        // Anvend matrixen for at placere cirklen
+        circle.applyMatrix4(matrix);
+
+        scene.add(circle);
+        circles.push(circle);
+      }
+
+      // Opret partikelsky
+      const particleCount = 500;
+      const particlesGeometry = new THREE.BufferGeometry();
+      const positions = new Float32Array(particleCount * 3);
+
+      for (let i = 0; i < particleCount; i++) {
+        positions[i * 3] = (Math.random() - 0.5) * 2;
+        positions[i * 3 + 1] = (Math.random() - 0.5) * 2;
+        positions[i * 3 + 2] = (Math.random() - 0.5) * 2;
+      }
+
+      particlesGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      const particlesMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.02 });
+      particles = new THREE.Points(particlesGeometry, particlesMaterial);
+
+      // Anvend matrixen for at placere partikelskyen
+      particles.applyMatrix4(matrix);
+
+      scene.add(particles);
+    }
+
+    function render() {
       if (analyser) {
         analyser.getByteFrequencyData(dataArray);
         const avgFrequency = dataArray.reduce((a, b) => a + b) / dataArray.length;
@@ -133,59 +149,7 @@
         });
 
         // Opdater partikler
-        if (particles) {
-          particles.rotation.y += 0.001 * avgFrequency;
-        }
-      }
-
-      // Hit-test logik for at placere objekter i verden
-      if (frame) {
-        const referenceSpace = renderer.xr.getReferenceSpace();
-        const session = renderer.xr.getSession();
-
-        if (controller.userData.hitTestSource) {
-          const hitTestResults = frame.getHitTestResults(controller.userData.hitTestSource);
-
-          if (hitTestResults.length > 0) {
-            const hit = hitTestResults[0];
-            const pose = hit.getPose(referenceSpace);
-
-            reticle.visible = true;
-            reticle.matrix.fromArray(pose.transform.matrix);
-
-            if (!circles.length) {
-              // Opret cirkler ved reticle-positionen
-              for (let i = 1; i <= 5; i++) {
-                let geometry = new THREE.CircleGeometry(0.1 * i, 32);
-                let material = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, transparent: true });
-                let circle = new THREE.Mesh(geometry, material);
-                circle.position.setFromMatrixPosition(reticle.matrix);
-                circle.rotation.setFromRotationMatrix(reticle.matrix);
-                scene.add(circle);
-                circles.push(circle);
-              }
-
-              // Opret partikelsky ved reticle-positionen
-              const particleCount = 500;
-              const particlesGeometry = new THREE.BufferGeometry();
-              const positions = new Float32Array(particleCount * 3);
-
-              for (let i = 0; i < particleCount; i++) {
-                positions[i * 3] = (Math.random() - 0.5) * 2;
-                positions[i * 3 + 1] = (Math.random() - 0.5) * 2;
-                positions[i * 3 + 2] = (Math.random() - 0.5) * 2;
-              }
-
-              particlesGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-              const particlesMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.02 });
-              particles = new THREE.Points(particlesGeometry, particlesMaterial);
-              particles.position.setFromMatrixPosition(reticle.matrix);
-              scene.add(particles);
-            }
-          } else {
-            reticle.visible = false;
-          }
-        }
+        particles.rotation.y += 0.001 * avgFrequency;
       }
 
       renderer.render(scene, camera);
