@@ -30,31 +30,19 @@
     import { ARButton } from 'https://unpkg.com/three@0.150.1/examples/jsm/webxr/ARButton.js';
 
     let camera, scene, renderer;
-    let circles = [];
-    let particles;
-    let grid;
-    let analyser;
-    let dataArray;
-    let clock = new THREE.Clock();
-    let flashIntensity = 0;
-
-    // Ny variabler til stjerneskud
-    let shootingStars = [];
-    let shootingStarTimer = 0;
+    let analyser, dataArray, clock = new THREE.Clock();
+    let fireworks = [], lavaLampShapes = [], explodingParticles = [], shootingStars = [];
+    let aurora, auroraTimer = 0;
 
     init();
 
     function init() {
-      // Scene og kamera
       scene = new THREE.Scene();
-
       camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
-
-      // Renderer
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.xr.enabled = true;
-      renderer.setClearColor(0x000000, 0); // Sæt baggrunden til transparent
+      renderer.setClearColor(0x000000, 0); // Transparent AR
       document.body.appendChild(renderer.domElement);
 
       // Lys
@@ -62,19 +50,17 @@
       light.position.set(0.5, 1, 0.25);
       scene.add(light);
 
-      // Event listener for "Start AR"-knappen
+      // Start AR session
       document.getElementById('start-button').addEventListener('click', () => {
         if (navigator.xr) {
           navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
             if (supported) {
-              const sessionInit = { optionalFeatures: ['dom-overlay'], domOverlay: { root: document.body } };
-              navigator.xr.requestSession('immersive-ar', sessionInit).then(onSessionStarted);
+              navigator.xr.requestSession('immersive-ar', { optionalFeatures: ['dom-overlay'], domOverlay: { root: document.body } })
+                .then(onSessionStarted);
             } else {
-              alert('WebXR AR-session understøttes ikke på denne enhed.');
+              alert('AR-session ikke understøttet på denne enhed.');
             }
           });
-        } else {
-          alert('WebXR ikke understøttet i denne browser.');
         }
       });
     }
@@ -83,139 +69,86 @@
       renderer.xr.setReferenceSpaceType('local');
       renderer.xr.setSession(session);
       document.getElementById('start-button').style.display = 'none';
-
-      // Start animationssløjfen efter XR-sessionen er startet
       renderer.setAnimationLoop(render);
 
-      // Opsæt lydanalyse
-      navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then((stream) => {
+      // Lydanalyse
+      navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
         const audioContext = new (window.AudioContext || window.webkitAudioContext)();
         const source = audioContext.createMediaStreamSource(stream);
         analyser = audioContext.createAnalyser();
         analyser.fftSize = 256;
-        const bufferLength = analyser.frequencyBinCount;
-        dataArray = new Uint8Array(bufferLength);
+        dataArray = new Uint8Array(analyser.frequencyBinCount);
         source.connect(analyser);
       });
 
-      // Opret og placer objekter direkte foran brugeren
-      createObjects();
+      // Aurora Borealis timer
+      auroraTimer = clock.elapsedTime + 60; // Start efter 1 minut
     }
 
-    function createObjects() {
-      // Placeringsmatrix for objekterne
-      const position = new THREE.Vector3(0, 0, -2); // 2 meter foran brugeren
-      const quaternion = new THREE.Quaternion();
-      const scale = new THREE.Vector3(1, 1, 1);
-      const matrix = new THREE.Matrix4();
-      matrix.compose(position, quaternion, scale);
+    function createFirework() {
+      const geometry = new THREE.SphereGeometry(0.05, 8, 8);
+      const material = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true });
+      const firework = new THREE.Mesh(geometry, material);
 
-      // Opret cirkler
-      for (let i = 1; i <= 5; i++) {
-        let geometry = new THREE.CircleGeometry(0.1 * i, 64);
-        let material = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, transparent: true });
-        let circle = new THREE.Mesh(geometry, material);
+      firework.position.set(0, 0, -3);
+      firework.userData.explosionSpeed = Math.random() * 0.1 + 0.05;
+      scene.add(firework);
+      fireworks.push(firework);
+    }
 
-        // Anvend matrixen for at placere cirklen
-        circle.applyMatrix4(matrix);
+    function createLavaLampShape() {
+      const geometry = new THREE.SphereGeometry(Math.random() * 0.2 + 0.1, 32, 32);
+      const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.7 });
+      const shape = new THREE.Mesh(geometry, material);
 
-        scene.add(circle);
-        circles.push(circle);
+      shape.position.set(Math.random() - 0.5, Math.random() - 0.5, -3).multiplyScalar(3);
+      shape.userData.scaleSpeed = Math.random() * 0.02 + 0.01;
+      scene.add(shape);
+      lavaLampShapes.push(shape);
+    }
+
+    function createExplodingParticles() {
+      const geometry = new THREE.BufferGeometry();
+      const count = 200;
+      const positions = new Float32Array(count * 3);
+
+      for (let i = 0; i < count; i++) {
+        positions[i * 3] = (Math.random() - 0.5) * 2;
+        positions[i * 3 + 1] = (Math.random() - 0.5) * 2;
+        positions[i * 3 + 2] = (Math.random() - 0.5) * 2;
       }
 
-      // Opret partikelsky
-      const particleCount = 1000;
-      const particlesGeometry = new THREE.BufferGeometry();
-      const positions = new Float32Array(particleCount * 3);
-      const colors = new Float32Array(particleCount * 3);
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      const material = new THREE.PointsMaterial({ size: 0.05, color: 0xff0000, transparent: true, opacity: 0.8 });
+      const particles = new THREE.Points(geometry, material);
 
-      for (let i = 0; i < particleCount; i++) {
-        positions[i * 3] = (Math.random() - 0.5) * 4;
-        positions[i * 3 + 1] = (Math.random() - 0.5) * 4;
-        positions[i * 3 + 2] = (Math.random() - 0.5) * 4;
-
-        colors[i * 3] = 1.0;
-        colors[i * 3 + 1] = 1.0;
-        colors[i * 3 + 2] = 1.0;
-      }
-
-      particlesGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      particlesGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-      const particlesMaterial = new THREE.PointsMaterial({
-        size: 0.03,
-        vertexColors: true,
-        transparent: true,
-        opacity: 0.8,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      });
-      particles = new THREE.Points(particlesGeometry, particlesMaterial);
-
-      // Anvend matrixen for at placere partikelskyen
-      particles.applyMatrix4(matrix);
-
+      particles.position.set(0, 0, -3);
+      particles.userData.fadeSpeed = 0.02;
       scene.add(particles);
-
-      // Opret gitter
-      const gridGeometry = new THREE.PlaneGeometry(6, 6, 20, 20);
-      const gridMaterial = new THREE.MeshBasicMaterial({
-        wireframe: true,
-        transparent: true,
-        opacity: 0.5,
-        vertexColors: true,
-        side: THREE.DoubleSide,
-      });
-
-      const gridColors = new Float32Array(gridGeometry.attributes.position.count * 3);
-      for (let i = 0; i < gridColors.length; i += 3) {
-        gridColors[i] = 0.0;     // Initial R værdi (mørkeblå)
-        gridColors[i + 1] = 0.0; // Initial G værdi
-        gridColors[i + 2] = 0.545; // Initial B værdi (#00008b)
-      }
-      gridGeometry.setAttribute('color', new THREE.BufferAttribute(gridColors, 3));
-
-      grid = new THREE.Mesh(gridGeometry, gridMaterial);
-      grid.position.set(0, 0, -3); // 3 meter foran brugeren
-
-      // Rotér gitteret som ønsket
-      grid.rotation.x = Math.PI / 4;  // 45 grader omkring X-aksen
-      grid.rotation.z = Math.PI / 12; // 15 grader omkring Z-aksen
-
-      // Skaler gitteret
-      grid.scale.set(1.5, 1.5, 1.5); // Øg størrelsen til 150%
-
-      scene.add(grid);
+      explodingParticles.push(particles);
     }
 
-    function createShootingStars(intensity) {
-      const starCount = Math.floor(5 + intensity * 20); // Antal stjerner baseret på intensitet
+    function createShootingStarMatrix() {
+      const starCount = 10;
       for (let i = 0; i < starCount; i++) {
-        const geometry = new THREE.CircleGeometry(0.05, 3); // Trekantsformet partikel
-        const material = new THREE.MeshBasicMaterial({
-          color: new THREE.Color(Math.random(), Math.random(), Math.random()),
-          side: THREE.DoubleSide,
-          transparent: true,
-          opacity: 0.8,
-        });
+        const geometry = new THREE.SphereGeometry(0.03, 8, 8);
+        const material = new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.8 });
         const star = new THREE.Mesh(geometry, material);
 
-        // Startposition bag kameraet
-        star.position.set(
-          (Math.random() - 0.5) * 2, // Tilfældig x-position
-          (Math.random() - 0.5) * 2, // Tilfældig y-position
-          1 // Lige bag kameraet
-        );
-
-        // Bevægelsesdata
-        star.userData.velocity = new THREE.Vector3(
-          (Math.random() - 0.5) * 0.2, // Lille sidelæns bevægelse
-          -0.5 - Math.random() * 0.5,   // Fald nedad
-          -1 - Math.random() * 1        // Flyver fremad
-        );
-
+        star.position.set((Math.random() - 0.5) * 2, (Math.random() - 0.5) * 2, -3);
+        star.userData.velocity = new THREE.Vector3(0, -0.5 - Math.random() * 0.5, -0.5 - Math.random());
         scene.add(star);
         shootingStars.push(star);
       }
+    }
+
+    function createAurora() {
+      const geometry = new THREE.PlaneGeometry(5, 3, 32, 32);
+      const material = new THREE.MeshBasicMaterial({ color: 0x88ccff, transparent: true, opacity: 0.5, side: THREE.DoubleSide });
+      aurora = new THREE.Mesh(geometry, material);
+
+      aurora.position.set(0, 2, -3);
+      scene.add(aurora);
     }
 
     function render() {
@@ -224,99 +157,64 @@
       if (analyser) {
         analyser.getByteFrequencyData(dataArray);
         const avgFrequency = dataArray.reduce((a, b) => a + b) / dataArray.length;
-        const intensity = avgFrequency / 255;
 
-        // --- Slow-motion effekt ---
-        const speedFactor = 0.5 + intensity;
+        // Fireworks
+        if (avgFrequency > 200) createFirework();
 
-        // Opdater cirkler
-        circles.forEach((circle, index) => {
-          const freqIndex = index % dataArray.length;
-          const scale = 1 + dataArray[freqIndex] / 64; // Øg skaleringen
-          circle.scale.set(scale, scale, scale);
-          circle.material.opacity = Math.max(0.5, dataArray[freqIndex] / 255);
-          circle.material.color.setHSL(dataArray[freqIndex] / 255, 1, 0.7); // Øg farvemætning
+        fireworks.forEach((firework, index) => {
+          firework.scale.addScalar(firework.userData.explosionSpeed);
+          firework.material.opacity -= delta * 0.5;
+
+          if (firework.material.opacity <= 0) {
+            scene.remove(firework);
+            fireworks.splice(index, 1);
+          }
         });
 
-        // Opdater partikler
-        particles.rotation.y += 0.1 * delta * speedFactor;
-        const colors = particles.geometry.attributes.color.array;
-        for (let i = 0; i < colors.length / 3; i++) {
-          const pulse = 0.5 + 0.5 * Math.sin(clock.elapsedTime * 5 + i);
-          colors[i * 3] = intensity * pulse; // Gør farver mere intense
-          colors[i * 3 + 1] = (1 - intensity) * pulse;
-          colors[i * 3 + 2] = 0.5 * pulse;
-        }
-        particles.geometry.attributes.color.needsUpdate = true;
+        // Lava Lamp Shapes
+        if (Math.random() < 0.1) createLavaLampShape();
 
-        // Opdater gitterets bevægelse
-        const positions = grid.geometry.attributes.position.array;
-        const time = clock.elapsedTime;
-        const waveAmplitude = 1 + intensity; // Øget amplitude med intensitet
-        const waveSpeed = 1.5 + intensity;  // Hurtigere bevægelse ved høj intensitet
-
-        for (let i = 0; i < positions.length; i += 3) {
-          const x = positions[i];
-          const y = positions[i + 1];
-          const frequency = dataArray[Math.floor((i / 3) % dataArray.length)];
-          positions[i + 2] = waveAmplitude * Math.sin(x * 3 + time * waveSpeed) * (frequency / 128) +
-                             waveAmplitude * Math.cos(y * 3 + time * waveSpeed) * (frequency / 128);
-        }
-        grid.geometry.attributes.position.needsUpdate = true;
-
-        // Opdater gitterets farver
-        const gridColors = grid.geometry.attributes.color.array;
-        for (let i = 0; i < gridColors.length / 3; i++) {
-          const frequency = dataArray[i % dataArray.length];
-          gridColors[i * 3] = 0.1 + 0.8 * (frequency / 255);             // Rød komponent
-          gridColors[i * 3 + 1] = 0.1 + 0.5 * ((255 - frequency) / 255); // Grøn komponent
-          gridColors[i * 3 + 2] = 0.4 + 0.6 * (frequency / 255);         // Blå komponent
-        }
-        grid.geometry.attributes.color.needsUpdate = true;
-
-        // --- Flash-effekt ved kraftige trommeslag ---
-        if (avgFrequency > 200) {
-          flashIntensity = 1;
-          circles.forEach(circle => circle.material.color.setHSL(0.1, 1, 1)); // Lysere farver på cirkler
-          particles.material.opacity = 1; // Gør partikler helt synlige
-        }
-        flashIntensity *= 0.9; // Fade effekten
-
-        // Forstærk lysstyrken på cirkler og partikler
-        circles.forEach(circle => {
-          circle.material.opacity = Math.max(circle.material.opacity, 0.5); // Undgå nul opacitet
-          circle.material.opacity += (1 - circle.material.opacity) * flashIntensity * delta;
-          circle.material.opacity = Math.min(circle.material.opacity, 1);
+        lavaLampShapes.forEach((shape, index) => {
+          shape.scale.addScalar(shape.userData.scaleSpeed * delta);
+          if (shape.scale.x > 2) {
+            scene.remove(shape);
+            lavaLampShapes.splice(index, 1);
+          }
         });
-        particles.material.opacity = Math.max(particles.material.opacity, 0.5);
-        particles.material.opacity += (1 - particles.material.opacity) * flashIntensity * delta;
-        particles.material.opacity = Math.min(particles.material.opacity, 1);
 
-        // --- Stjerneskud ---
-        shootingStarTimer += delta;
-        if (shootingStarTimer >= 10) {
-          createShootingStars(intensity);
-          shootingStarTimer = 0;
-        }
+        // Exploding Particles
+        if (Math.random() < 0.05) createExplodingParticles();
 
-        // Opdater stjerneskud
-        for (let i = shootingStars.length - 1; i >= 0; i--) {
-          const star = shootingStars[i];
-          star.position.addScaledVector(star.userData.velocity, delta * speedFactor);
+        explodingParticles.forEach((particles, index) => {
+          particles.material.opacity -= particles.userData.fadeSpeed;
 
-          // Roter stjernen for at give en dynamisk effekt
-          star.rotation.z += delta * 5;
+          if (particles.material.opacity <= 0) {
+            scene.remove(particles);
+            explodingParticles.splice(index, 1);
+          }
+        });
 
-          // Opdater opacitet baseret på position
-          star.material.opacity -= delta * 0.5;
-          if (star.material.opacity <= 0 || star.position.z < -5) {
-            // Fjern stjernen fra scenen og arrayet
+        // Shooting Stars
+        if (Math.random() < 0.2) createShootingStarMatrix();
+
+        shootingStars.forEach((star, index) => {
+          star.position.add(star.userData.velocity.clone().multiplyScalar(delta));
+          if (star.position.z < -5) {
             scene.remove(star);
-            shootingStars.splice(i, 1);
+            shootingStars.splice(index, 1);
+          }
+        });
+
+        // Aurora Borealis
+        if (clock.elapsedTime > auroraTimer && !aurora) createAurora();
+
+        if (aurora) {
+          aurora.material.opacity -= delta * 0.01;
+          if (aurora.material.opacity <= 0) {
+            scene.remove(aurora);
+            aurora = null;
           }
         }
-
-        // Ingen baggrundsfarve - behold AR passthrough
       }
 
       renderer.render(scene, camera);
