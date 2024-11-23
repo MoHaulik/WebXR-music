@@ -28,6 +28,7 @@
   <script type="module">
     import * as THREE from 'https://unpkg.com/three@0.150.1/build/three.module.js';
     import { ARButton } from 'https://unpkg.com/three@0.150.1/examples/jsm/webxr/ARButton.js';
+    import { LineSegments } from 'https://unpkg.com/three@0.150.1/src/objects/LineSegments.js';
 
     let camera, scene, renderer;
     let circles = [];
@@ -42,7 +43,6 @@
     let shootingStars = [];
     let shootingStarTimer = 0;
     let fireworks = [];
-    let lavaLamps = [];
     let aurora;
     let auroraTimer = 0;
     let auroraVisible = false;
@@ -163,33 +163,19 @@
       scene.add(particles);
 
       // Opret gitter
-      const gridGeometry = new THREE.PlaneGeometry(6, 6, 20, 20);
-      const gridMaterial = new THREE.MeshBasicMaterial({
-        wireframe: true,
-        transparent: true,
-        opacity: 0.5,
-        vertexColors: true,
-        side: THREE.DoubleSide,
-      });
+      const gridSize = 6;
+      const divisions = 20;
+      const gridHelper = new THREE.GridHelper(gridSize, divisions, 0xffffff, 0xffffff);
+      gridHelper.material.opacity = 0.5;
+      gridHelper.material.transparent = true;
+      gridHelper.material.depthWrite = false;
+      gridHelper.position.set(0, 0, -3);
+      gridHelper.rotation.x = Math.PI / 4;  // 45 grader omkring X-aksen
+      gridHelper.rotation.z = Math.PI / 12; // 15 grader omkring Z-aksen
+      gridHelper.scale.set(1.5, 1.5, 1.5); // Øg størrelsen til 150%
+      gridHelper.material.linewidth = 2; // Gør linjerne tykkere (Bemærk: Dette fungerer kun i visse tilfælde)
 
-      const gridColors = new Float32Array(gridGeometry.attributes.position.count * 3);
-      for (let i = 0; i < gridColors.length; i += 3) {
-        gridColors[i] = 0.0;     // Initial R værdi (mørkeblå)
-        gridColors[i + 1] = 0.0; // Initial G værdi
-        gridColors[i + 2] = 0.545; // Initial B værdi (#00008b)
-      }
-      gridGeometry.setAttribute('color', new THREE.BufferAttribute(gridColors, 3));
-
-      grid = new THREE.Mesh(gridGeometry, gridMaterial);
-      grid.position.set(0, 0, -3); // 3 meter foran brugeren
-
-      // Rotér gitteret som ønsket
-      grid.rotation.x = Math.PI / 4;  // 45 grader omkring X-aksen
-      grid.rotation.z = Math.PI / 12; // 15 grader omkring Z-aksen
-
-      // Skaler gitteret
-      grid.scale.set(1.5, 1.5, 1.5); // Øg størrelsen til 150%
-
+      grid = gridHelper;
       scene.add(grid);
     }
 
@@ -205,7 +191,7 @@
         ]);
         geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
         const material = new THREE.MeshBasicMaterial({
-          color: new THREE.Color(1, 1, 1),
+          color: new THREE.Color(Math.random(), Math.random(), Math.random()),
           side: THREE.DoubleSide,
           transparent: true,
           opacity: 0.8,
@@ -231,6 +217,155 @@
         scene.add(star);
         shootingStars.push(star);
       }
+    }
+
+    // Funktion til at skabe aurora borealis
+    function createAurora() {
+      const geometry = new THREE.PlaneGeometry(10, 5, 32, 32);
+      const material = new THREE.ShaderMaterial({
+        uniforms: {
+          time: { value: 0 },
+          intensity: { value: 0 },
+          dataArray: { value: dataArray },
+        },
+        vertexShader: `
+          varying vec2 vUv;
+          varying float vWave;
+          uniform float time;
+          uniform float intensity;
+          uniform float dataArray[256];
+          void main() {
+            vUv = uv;
+            vec3 pos = position;
+            float freq = dataArray[int(mod(position.x + 5.0, 256.0))];
+            float wave = sin(pos.x * 2.0 + time) * 0.5 * intensity * (freq / 255.0);
+            pos.z += wave * 2.0;
+            vWave = wave;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+          }
+        `,
+        fragmentShader: `
+          varying vec2 vUv;
+          varying float vWave;
+          void main() {
+            gl_FragColor = vec4(0.5 + vWave, 0.8 + vWave, 1.0, 0.5);
+          }
+        `,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+      });
+      aurora = new THREE.Mesh(geometry, material);
+      aurora.position.set(0, 5, -10);
+      aurora.rotation.x = -Math.PI / 4;
+      scene.add(aurora);
+    }
+
+    function render() {
+      const delta = clock.getDelta();
+      const elapsedTime = clock.elapsedTime;
+
+      if (analyser) {
+        analyser.getByteFrequencyData(dataArray);
+        const avgFrequency = dataArray.reduce((a, b) => a + b) / dataArray.length;
+        const intensity = avgFrequency / 255;
+
+        // --- Slow-motion effekt ---
+        const speedFactor = 0.5 + intensity;
+
+        // Opdater cirkler
+        circles.forEach((circle, index) => {
+          const freqIndex = index % dataArray.length;
+          const scale = 1 + dataArray[freqIndex] / 64; // Øg skaleringen
+          circle.scale.set(scale, scale, scale);
+          circle.material.opacity = Math.max(0.5, dataArray[freqIndex] / 255);
+          circle.material.color.setHSL(dataArray[freqIndex] / 255, 1, 0.7); // Øg farvemætning
+        });
+
+        // Opdater partikler
+        particles.rotation.y += 0.1 * delta * speedFactor;
+        const colors = particles.geometry.attributes.color.array;
+        for (let i = 0; i < colors.length / 3; i++) {
+          const pulse = 0.5 + 0.5 * Math.sin(elapsedTime * 5 + i);
+          colors[i * 3] = intensity * pulse; // Gør farver mere intense
+          colors[i * 3 + 1] = (1 - intensity) * pulse;
+          colors[i * 3 + 2] = 0.5 * pulse;
+        }
+        particles.geometry.attributes.color.needsUpdate = true;
+
+        // Opdater gitterets bevægelse
+        grid.rotation.z += 0.01 * delta * speedFactor;
+        grid.material.opacity = 0.3 + 0.2 * intensity;
+
+        // --- Flash-effekt ved kraftige trommeslag ---
+        if (avgFrequency > 200) {
+          flashIntensity = 1;
+          circles.forEach(circle => circle.material.color.setHSL(0.1, 1, 1)); // Lysere farver på cirkler
+          particles.material.opacity = 1; // Gør partikler helt synlige
+
+          // Opret fyrværkeri
+          if (elapsedTime - lastPeakTime > 1) { // For at undgå for mange fyrværkerier
+            createFirework();
+            lastPeakTime = elapsedTime;
+          }
+
+          // Opret eksploderende partikler
+          createExplodingParticles();
+        }
+        flashIntensity *= 0.9; // Fade effekten
+
+        // Forstærk lysstyrken på cirkler og partikler
+        circles.forEach(circle => {
+          circle.material.opacity = Math.max(circle.material.opacity, 0.5); // Undgå nul opacitet
+          circle.material.opacity += (1 - circle.material.opacity) * flashIntensity * delta;
+          circle.material.opacity = Math.min(circle.material.opacity, 1);
+        });
+        particles.material.opacity = Math.max(particles.material.opacity, 0.5);
+        particles.material.opacity += (1 - particles.material.opacity) * flashIntensity * delta;
+        particles.material.opacity = Math.min(particles.material.opacity, 1);
+
+        // --- Stjerneskud ---
+        shootingStarTimer += delta;
+        if (shootingStarTimer >= 5) { // Hver 5. sekund
+          createShootingStars(intensity);
+          shootingStarTimer = 0;
+        }
+
+        // Opdater stjerneskud
+        for (let i = shootingStars.length - 1; i >= 0; i--) {
+          const star = shootingStars[i];
+          star.position.addScaledVector(star.userData.velocity, delta * speedFactor);
+
+          // Opdater opacitet baseret på position
+          star.material.opacity -= delta * 0.2;
+          if (star.material.opacity <= 0 || star.position.z < -5) {
+            // Fjern stjernen fra scenen og arrayet
+            scene.remove(star);
+            shootingStars.splice(i, 1);
+          }
+        }
+
+        // --- Aurora Borealis ---
+        auroraTimer += delta;
+        if (auroraTimer >= 60 && !auroraVisible) {
+          createAurora();
+          auroraVisible = true;
+          auroraTimer = 0;
+        }
+        if (auroraVisible) {
+          aurora.material.uniforms.time.value = elapsedTime;
+          aurora.material.uniforms.intensity.value = intensity * 2; // Gør den mere lydfølsom
+          if (auroraTimer >= 50) {
+            scene.remove(aurora);
+            auroraVisible = false;
+            auroraTimer = 0;
+          }
+        }
+
+        // Ingen baggrundsfarve - behold AR passthrough
+      }
+
+      renderer.render(scene, camera);
     }
 
     // Funktion til at skabe fyrværkerieksplosioner
@@ -286,231 +421,6 @@
       firework.particles = particles;
       firework.velocities = velocities;
       fireworks.push(firework);
-    }
-
-    // Funktion til at skabe lava lampe effekt
-    function createLavaLamp() {
-      const geometry = new THREE.IcosahedronGeometry(0.5, 2);
-      const material = new THREE.MeshStandardMaterial({
-        color: new THREE.Color(Math.random(), Math.random(), Math.random()),
-        emissive: new THREE.Color(0.2, 0.2, 0.2),
-        metalness: 0.5,
-        roughness: 0.5,
-        transparent: true,
-        opacity: 0.8,
-      });
-      const lavaLamp = new THREE.Mesh(geometry, material);
-
-      lavaLamp.position.set(
-        (Math.random() - 0.5) * 4,
-        (Math.random() - 0.5) * 4,
-        -2 - Math.random() * 3
-      );
-
-      scene.add(lavaLamp);
-      lavaLamps.push(lavaLamp);
-    }
-
-    // Funktion til at skabe aurora borealis
-    function createAurora() {
-      const geometry = new THREE.PlaneGeometry(10, 5, 32, 32);
-      const material = new THREE.ShaderMaterial({
-        uniforms: {
-          time: { value: 0 },
-          intensity: { value: 0 },
-        },
-        vertexShader: `
-          varying vec2 vUv;
-          varying float vWave;
-          uniform float time;
-          uniform float intensity;
-          void main() {
-            vUv = uv;
-            vec3 pos = position;
-            float wave = sin(pos.x * 2.0 + time) * 0.5 * intensity;
-            pos.z += wave;
-            vWave = wave;
-            gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-          }
-        `,
-        fragmentShader: `
-          varying vec2 vUv;
-          varying float vWave;
-          void main() {
-            gl_FragColor = vec4(0.5 + vWave, 0.8 + vWave, 1.0, 0.5);
-          }
-        `,
-        transparent: true,
-        blending: THREE.AdditiveBlending,
-        side: THREE.DoubleSide,
-      });
-      aurora = new THREE.Mesh(geometry, material);
-      aurora.position.set(0, 5, -10);
-      aurora.rotation.x = -Math.PI / 4;
-      scene.add(aurora);
-    }
-
-    function render() {
-      const delta = clock.getDelta();
-      const elapsedTime = clock.elapsedTime;
-
-      if (analyser) {
-        analyser.getByteFrequencyData(dataArray);
-        const avgFrequency = dataArray.reduce((a, b) => a + b) / dataArray.length;
-        const intensity = avgFrequency / 255;
-
-        // --- Slow-motion effekt ---
-        const speedFactor = 0.5 + intensity;
-
-        // Opdater cirkler
-        circles.forEach((circle, index) => {
-          const freqIndex = index % dataArray.length;
-          const scale = 1 + dataArray[freqIndex] / 64; // Øg skaleringen
-          circle.scale.set(scale, scale, scale);
-          circle.material.opacity = Math.max(0.5, dataArray[freqIndex] / 255);
-          circle.material.color.setHSL(dataArray[freqIndex] / 255, 1, 0.7); // Øg farvemætning
-        });
-
-        // Opdater partikler
-        particles.rotation.y += 0.1 * delta * speedFactor;
-        const colors = particles.geometry.attributes.color.array;
-        for (let i = 0; i < colors.length / 3; i++) {
-          const pulse = 0.5 + 0.5 * Math.sin(elapsedTime * 5 + i);
-          colors[i * 3] = intensity * pulse; // Gør farver mere intense
-          colors[i * 3 + 1] = (1 - intensity) * pulse;
-          colors[i * 3 + 2] = 0.5 * pulse;
-        }
-        particles.geometry.attributes.color.needsUpdate = true;
-
-        // Opdater gitterets bevægelse
-        const positions = grid.geometry.attributes.position.array;
-        const time = elapsedTime;
-        const waveAmplitude = 1 + intensity; // Øget amplitude med intensitet
-        const waveSpeed = 1.5 + intensity;  // Hurtigere bevægelse ved høj intensitet
-
-        for (let i = 0; i < positions.length; i += 3) {
-          const x = positions[i];
-          const y = positions[i + 1];
-          const frequency = dataArray[Math.floor((i / 3) % dataArray.length)];
-          positions[i + 2] = waveAmplitude * Math.sin(x * 3 + time * waveSpeed) * (frequency / 128) +
-                             waveAmplitude * Math.cos(y * 3 + time * waveSpeed) * (frequency / 128);
-        }
-        grid.geometry.attributes.position.needsUpdate = true;
-
-        // Opdater gitterets farver
-        const gridColors = grid.geometry.attributes.color.array;
-        for (let i = 0; i < gridColors.length / 3; i++) {
-          const frequency = dataArray[i % dataArray.length];
-          gridColors[i * 3] = 0.1 + 0.8 * (frequency / 255);             // Rød komponent
-          gridColors[i * 3 + 1] = 0.1 + 0.5 * ((255 - frequency) / 255); // Grøn komponent
-          gridColors[i * 3 + 2] = 0.4 + 0.6 * (frequency / 255);         // Blå komponent
-        }
-        grid.geometry.attributes.color.needsUpdate = true;
-
-        // --- Flash-effekt ved kraftige trommeslag ---
-        if (avgFrequency > 200) {
-          flashIntensity = 1;
-          circles.forEach(circle => circle.material.color.setHSL(0.1, 1, 1)); // Lysere farver på cirkler
-          particles.material.opacity = 1; // Gør partikler helt synlige
-
-          // Opret fyrværkeri
-          if (elapsedTime - lastPeakTime > 1) { // For at undgå for mange fyrværkerier
-            createFirework();
-            lastPeakTime = elapsedTime;
-          }
-
-          // Opret eksploderende partikler
-          createExplodingParticles();
-        }
-        flashIntensity *= 0.9; // Fade effekten
-
-        // Forstærk lysstyrken på cirkler og partikler
-        circles.forEach(circle => {
-          circle.material.opacity = Math.max(circle.material.opacity, 0.5); // Undgå nul opacitet
-          circle.material.opacity += (1 - circle.material.opacity) * flashIntensity * delta;
-          circle.material.opacity = Math.min(circle.material.opacity, 1);
-        });
-        particles.material.opacity = Math.max(particles.material.opacity, 0.5);
-        particles.material.opacity += (1 - particles.material.opacity) * flashIntensity * delta;
-        particles.material.opacity = Math.min(particles.material.opacity, 1);
-
-        // --- Stjerneskud ---
-        shootingStarTimer += delta;
-        if (shootingStarTimer >= 5) { // Hver 5. sekund
-          createShootingStars(intensity);
-          shootingStarTimer = 0;
-        }
-
-        // Opdater stjerneskud
-        for (let i = shootingStars.length - 1; i >= 0; i--) {
-          const star = shootingStars[i];
-          star.position.addScaledVector(star.userData.velocity, delta * speedFactor);
-
-          // Opdater opacitet baseret på position
-          star.material.opacity -= delta * 0.2;
-          if (star.material.opacity <= 0 || star.position.z < -5) {
-            // Fjern stjernen fra scenen og arrayet
-            scene.remove(star);
-            shootingStars.splice(i, 1);
-          }
-        }
-
-        // --- Opdater fyrværkerier ---
-        for (let i = fireworks.length - 1; i >= 0; i--) {
-          const firework = fireworks[i];
-          firework.life -= delta;
-          if (firework.life <= 0) {
-            scene.remove(firework.particles);
-            fireworks.splice(i, 1);
-            continue;
-          }
-
-          const positions = firework.particles.geometry.attributes.position.array;
-          for (let j = 0; j < positions.length; j += 3) {
-            positions[j] += firework.velocities[j / 3].x * delta;
-            positions[j + 1] += firework.velocities[j / 3].y * delta;
-            positions[j + 2] += firework.velocities[j / 3].z * delta;
-          }
-          firework.particles.geometry.attributes.position.needsUpdate = true;
-        }
-
-        // --- Lavalampe-effekt ---
-        if (lavaLamps.length < 5 && Math.random() < 0.01) {
-          createLavaLamp();
-        }
-        lavaLamps.forEach((lamp, index) => {
-          lamp.rotation.y += delta * 0.5;
-          lamp.material.color.offsetHSL(0.001, 0, 0);
-          lamp.scale.setScalar(1 + Math.sin(elapsedTime * 2 + index) * 0.3);
-        });
-
-        // Fjern lavalampor efter en vis tid
-        if (lavaLamps.length > 5) {
-          const lamp = lavaLamps.shift();
-          scene.remove(lamp);
-        }
-
-        // --- Aurora Borealis ---
-        auroraTimer += delta;
-        if (auroraTimer >= 60 && !auroraVisible) {
-          createAurora();
-          auroraVisible = true;
-          auroraTimer = 0;
-        }
-        if (auroraVisible) {
-          aurora.material.uniforms.time.value = elapsedTime;
-          aurora.material.uniforms.intensity.value = intensity;
-          if (auroraTimer >= 50) {
-            scene.remove(aurora);
-            auroraVisible = false;
-            auroraTimer = 0;
-          }
-        }
-
-        // Ingen baggrundsfarve - behold AR passthrough
-      }
-
-      renderer.render(scene, camera);
     }
 
     // Funktion til at skabe eksploderende partikler
