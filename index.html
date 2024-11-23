@@ -30,16 +30,21 @@
     import { ARButton } from 'https://unpkg.com/three@0.150.1/examples/jsm/webxr/ARButton.js';
 
     let camera, scene, renderer;
-    let particles, abstraction, lightBeams, orbitObjects;
+    let circles = [];
+    let particles;
+    let grid;
     let analyser;
     let dataArray;
     let clock = new THREE.Clock();
+    let flashIntensity = 0;
+    let backgroundColor = new THREE.Color(0x000000);
 
     init();
 
     function init() {
       // Scene og kamera
       scene = new THREE.Scene();
+
       camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
 
       // Renderer
@@ -48,13 +53,17 @@
       renderer.xr.enabled = true;
       document.body.appendChild(renderer.domElement);
 
+      // Lys
+      const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+      light.position.set(0.5, 1, 0.25);
+      scene.add(light);
+
       // Event listener for "Start AR"-knappen
       document.getElementById('start-button').addEventListener('click', () => {
         if (navigator.xr) {
           navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
             if (supported) {
               const sessionInit = { optionalFeatures: ['dom-overlay'], domOverlay: { root: document.body } };
-              renderer.xr.setReferenceSpaceType('viewer'); // Ændret til 'viewer'
               navigator.xr.requestSession('immersive-ar', sessionInit).then(onSessionStarted);
             } else {
               alert('WebXR AR-session understøttes ikke på denne enhed.');
@@ -67,6 +76,7 @@
     }
 
     function onSessionStarted(session) {
+      renderer.xr.setReferenceSpaceType('local');
       renderer.xr.setSession(session);
       document.getElementById('start-button').style.display = 'none';
 
@@ -82,196 +92,122 @@
         const bufferLength = analyser.frequencyBinCount;
         dataArray = new Uint8Array(bufferLength);
         source.connect(analyser);
-      }).catch((error) => {
-        console.error('Fejl ved adgang til mikrofonen:', error);
       });
 
-      // Opret objekter
-      try {
-        createParticles();
-        createAbstraction();
-        createLightBeams();
-        createOrbitObjects();
-      } catch (e) {
-        console.error('Fejl under oprettelse af objekter:', e);
-      }
+      // Opret og placer objekter direkte foran brugeren
+      createObjects();
     }
 
-    // --- Forbedrede partikler ---
-    function createParticles() {
-      try {
-        const particleCount = 500; // Reduceret for ydeevne
-        const particlesGeometry = new THREE.BufferGeometry();
-        const positions = [];
-        const colors = [];
+    function createObjects() {
+      // Placeringsmatrix for objekterne
+      const position = new THREE.Vector3(0, 0, -2); // 2 meter foran brugeren
+      const quaternion = new THREE.Quaternion();
+      const scale = new THREE.Vector3(1, 1, 1);
+      const matrix = new THREE.Matrix4();
+      matrix.compose(position, quaternion, scale);
 
-        const radius = 2; // 2 meter radius omkring brugeren
+      // Opret cirkler
+      for (let i = 1; i <= 5; i++) {
+        let geometry = new THREE.CircleGeometry(0.1 * i, 64);
+        let material = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, transparent: true });
+        let circle = new THREE.Mesh(geometry, material);
 
-        for (let i = 0; i < particleCount; i++) {
-          const phi = Math.acos(2 * Math.random() - 1);
-          const theta = 2 * Math.PI * Math.random();
+        // Anvend matrixen for at placere cirklen
+        circle.applyMatrix4(matrix);
 
-          const x = radius * Math.sin(phi) * Math.cos(theta);
-          const y = radius * Math.sin(phi) * Math.sin(theta);
-          const z = radius * Math.cos(phi);
-
-          positions.push(x, y, z);
-
-          // Initial farve (hvid)
-          colors.push(1.0, 1.0, 1.0);
-        }
-
-        particlesGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-        particlesGeometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-
-        const particlesMaterial = new THREE.PointsMaterial({
-          size: 0.05,
-          vertexColors: true,
-          transparent: true,
-          opacity: 0.8,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false,
-        });
-
-        particles = new THREE.Points(particlesGeometry, particlesMaterial);
-        scene.add(particles);
-      } catch (e) {
-        console.error('Fejl under oprettelse af partikler:', e);
+        scene.add(circle);
+        circles.push(circle);
       }
+
+      // Opret partikelsky
+      const particleCount = 1000;
+      const particlesGeometry = new THREE.BufferGeometry();
+      const positions = new Float32Array(particleCount * 3);
+      const colors = new Float32Array(particleCount * 3);
+
+      for (let i = 0; i < particleCount; i++) {
+        positions[i * 3] = (Math.random() - 0.5) * 4;
+        positions[i * 3 + 1] = (Math.random() - 0.5) * 4;
+        positions[i * 3 + 2] = (Math.random() - 0.5) * 4;
+
+        colors[i * 3] = 1.0;
+        colors[i * 3 + 1] = 1.0;
+        colors[i * 3 + 2] = 1.0;
+      }
+
+      particlesGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      particlesGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      const particlesMaterial = new THREE.PointsMaterial({
+        size: 0.03,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.8,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      particles = new THREE.Points(particlesGeometry, particlesMaterial);
+
+      // Anvend matrixen for at placere partikelskyen
+      particles.applyMatrix4(matrix);
+
+      scene.add(particles);
+
+      // Opret gitter
+      const gridGeometry = new THREE.PlaneGeometry(6, 6, 20, 20);
+      const gridMaterial = new THREE.MeshBasicMaterial({
+        color: 0x8888ff,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.5,
+      });
+      grid = new THREE.Mesh(gridGeometry, gridMaterial);
+      grid.position.set(0, 0, -3); // 3 meter foran brugeren
+      scene.add(grid);
     }
 
-    // --- Flydende abstraktion ---
-    function createAbstraction() {
-      try {
-        const geometry = new THREE.PlaneGeometry(6, 6, 32, 32); // Reduceret segmenter
-        const material = new THREE.MeshBasicMaterial({
-          color: 0xffffff,
-          side: THREE.DoubleSide,
-          transparent: true,
-          opacity: 0.5,
-          wireframe: true,
-        });
-
-        abstraction = new THREE.Mesh(geometry, material);
-        abstraction.position.set(0, 0, -3); // 3 meter foran brugeren
-        scene.add(abstraction);
-      } catch (e) {
-        console.error('Fejl under oprettelse af abstraktion:', e);
-      }
-    }
-
-    // --- Lysstråler ---
-    function createLightBeams() {
-      try {
-        lightBeams = [];
-
-        for (let i = 0; i < 8; i++) {
-          const geometry = new THREE.ConeGeometry(0.1, 2, 16); // Reduceret segmenter
-          const material = new THREE.MeshBasicMaterial({
-            color: 0xffffff,
-            transparent: true,
-            opacity: 0.5,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-          });
-
-          const cone = new THREE.Mesh(geometry, material);
-          cone.position.set(0, -1, -2);
-          cone.rotation.z = (i / 8) * Math.PI * 2;
-          cone.rotation.x = Math.PI;
-          scene.add(cone);
-          lightBeams.push(cone);
-        }
-      } catch (e) {
-        console.error('Fejl under oprettelse af lysstråler:', e);
-      }
-    }
-
-    // --- Objekter, der kredser om brugeren ---
-    function createOrbitObjects() {
-      try {
-        orbitObjects = [];
-
-        const orbitCount = 8; // Reduceret antal for ydeevne
-        const radius = 2; // 2 meter radius omkring brugeren
-
-        for (let i = 0; i < orbitCount; i++) {
-          const angle = (i / orbitCount) * Math.PI * 2;
-          const x = radius * Math.cos(angle);
-          const z = radius * Math.sin(angle);
-
-          const geometry = new THREE.SphereGeometry(0.1, 8, 8); // Reduceret segmenter
-          const material = new THREE.MeshStandardMaterial({ color: 0xffffff });
-          const sphere = new THREE.Mesh(geometry, material);
-          sphere.position.set(x, 0, z);
-          scene.add(sphere);
-          orbitObjects.push({ mesh: sphere, angle: angle });
-        }
-      } catch (e) {
-        console.error('Fejl under oprettelse af orbit-objekter:', e);
-      }
-    }
-
-    function render(timestamp, frame) {
+    function render() {
       const delta = clock.getDelta();
 
       if (analyser) {
         analyser.getByteFrequencyData(dataArray);
         const avgFrequency = dataArray.reduce((a, b) => a + b) / dataArray.length;
-
-        // Normaliseret intensitet
         const intensity = avgFrequency / 255;
 
-        // --- Forbedrede partikler ---
-        if (particles && particles.geometry && particles.geometry.attributes.color) {
-          const colors = particles.geometry.attributes.color.array;
-          for (let i = 0; i < colors.length / 3; i++) {
-            const pulse = 0.5 + 0.5 * Math.sin(clock.elapsedTime * 5 + i);
-            colors[i * 3] = intensity * pulse;
-            colors[i * 3 + 1] = (1 - intensity) * pulse;
-            colors[i * 3 + 2] = 0.5 * pulse;
-          }
-          particles.geometry.attributes.color.needsUpdate = true;
-          particles.rotation.y += 0.1 * delta * (0.5 + intensity);
+        // --- Slow-motion effekt ---
+        const speedFactor = 0.5 + intensity;
+
+        // Opdater cirkler
+        circles.forEach((circle, index) => {
+          const scale = 1 + dataArray[index] / 128;
+          circle.scale.set(scale, scale, scale);
+          circle.material.opacity = dataArray[index] / 255;
+          circle.material.color.setHSL(dataArray[index] / 255, 1, 0.5);
+        });
+
+        // Opdater partikler
+        particles.rotation.y += 0.1 * delta * speedFactor;
+        const colors = particles.geometry.attributes.color.array;
+        for (let i = 0; i < colors.length / 3; i++) {
+          const pulse = 0.5 + 0.5 * Math.sin(clock.elapsedTime * 5 + i);
+          colors[i * 3] = intensity * pulse;
+          colors[i * 3 + 1] = (1 - intensity) * pulse;
+          colors[i * 3 + 2] = 0.5 * pulse;
+        }
+        particles.geometry.attributes.color.needsUpdate = true;
+
+        // Opdater gitter
+        grid.rotation.z += 0.05 * delta * speedFactor;
+        grid.material.opacity = 0.3 + 0.2 * intensity;
+        grid.material.color.setHSL(0.6 + 0.4 * intensity, 1, 0.5);
+
+        // --- Pulseffekt ved kraftige trommeslag ---
+        if (avgFrequency > 200) {
+          flashIntensity = 1;
+          backgroundColor.set(0xffffff); // Skift baggrunden til hvid
         }
 
-        // --- Flydende abstraktion ---
-        if (abstraction && abstraction.geometry && abstraction.geometry.attributes.position) {
-          abstraction.material.color.setHSL(intensity, 1, 0.5);
-          abstraction.rotation.z += 0.05 * delta * (0.5 + intensity);
-
-          // Bølgende effekt
-          const positions = abstraction.geometry.attributes.position.array;
-          const time = clock.elapsedTime;
-          for (let i = 0; i < positions.length; i += 3) {
-            const x = positions[i];
-            const y = positions[i + 1];
-            positions[i + 2] = 0.5 * Math.sin(x * 2 + time + intensity) + 0.5 * Math.sin(y * 2 + time + intensity);
-          }
-          abstraction.geometry.attributes.position.needsUpdate = true;
-        }
-
-        // --- Lysstråler ---
-        if (lightBeams) {
-          lightBeams.forEach((beam, index) => {
-            beam.material.opacity = 0.2 + 0.8 * intensity;
-            beam.rotation.y = clock.elapsedTime * 0.5 + index;
-            beam.scale.y = 0.5 + intensity * 2;
-          });
-        }
-
-        // --- Objekter, der kredser om brugeren ---
-        if (orbitObjects) {
-          orbitObjects.forEach((obj) => {
-            obj.angle += 0.5 * delta * (0.5 + intensity);
-            const x = 2 * Math.cos(obj.angle);
-            const z = 2 * Math.sin(obj.angle);
-            obj.mesh.position.set(x, 0, z);
-            obj.mesh.rotation.y += delta * (1 + intensity);
-            obj.mesh.scale.setScalar(0.5 + 0.5 * intensity);
-            obj.mesh.material.color.setHSL(intensity, 1, 0.5);
-          });
-        }
+        flashIntensity *= 0.9; // Fade effekten
+        renderer.setClearColor(backgroundColor.clone().lerp(new THREE.Color(0x000000), 1 - flashIntensity), renderer.alpha);
       }
 
       renderer.render(scene, camera);
