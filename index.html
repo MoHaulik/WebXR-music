@@ -37,7 +37,6 @@
     let dataArray;
     let clock = new THREE.Clock();
     let flashIntensity = 0;
-    let backgroundColor = new THREE.Color(0x000000);
 
     init();
 
@@ -51,6 +50,7 @@
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.xr.enabled = true;
+      renderer.setClearColor(0x000000, 0); // Sæt baggrunden til transparent
       document.body.appendChild(renderer.domElement);
 
       // Lys
@@ -155,11 +155,21 @@
       // Opret gitter
       const gridGeometry = new THREE.PlaneGeometry(6, 6, 20, 20);
       const gridMaterial = new THREE.MeshBasicMaterial({
-        color: 0x8888ff,
         wireframe: true,
         transparent: true,
         opacity: 0.5,
+        vertexColors: true,
+        side: THREE.DoubleSide,
       });
+
+      const gridColors = new Float32Array(gridGeometry.attributes.position.count * 3);
+      for (let i = 0; i < gridColors.length; i += 3) {
+        gridColors[i] = 0.5;     // Initial R værdi
+        gridColors[i + 1] = 0.5; // Initial G værdi
+        gridColors[i + 2] = 0.5; // Initial B værdi
+      }
+      gridGeometry.setAttribute('color', new THREE.BufferAttribute(gridColors, 3));
+
       grid = new THREE.Mesh(gridGeometry, gridMaterial);
       grid.position.set(0, 0, -3); // 3 meter foran brugeren
       scene.add(grid);
@@ -178,10 +188,10 @@
 
         // Opdater cirkler
         circles.forEach((circle, index) => {
-          const scale = 1 + dataArray[index] / 128;
+          const scale = 1 + dataArray[index] / 64; // Øg skaleringen
           circle.scale.set(scale, scale, scale);
           circle.material.opacity = dataArray[index] / 255;
-          circle.material.color.setHSL(dataArray[index] / 255, 1, 0.5);
+          circle.material.color.setHSL(dataArray[index] / 255, 1, 0.7); // Øg farvemætning
         });
 
         // Opdater partikler
@@ -189,25 +199,53 @@
         const colors = particles.geometry.attributes.color.array;
         for (let i = 0; i < colors.length / 3; i++) {
           const pulse = 0.5 + 0.5 * Math.sin(clock.elapsedTime * 5 + i);
-          colors[i * 3] = intensity * pulse;
+          colors[i * 3] = intensity * pulse; // Gør farver mere intense
           colors[i * 3 + 1] = (1 - intensity) * pulse;
           colors[i * 3 + 2] = 0.5 * pulse;
         }
         particles.geometry.attributes.color.needsUpdate = true;
 
-        // Opdater gitter
-        grid.rotation.z += 0.05 * delta * speedFactor;
-        grid.material.opacity = 0.3 + 0.2 * intensity;
-        grid.material.color.setHSL(0.6 + 0.4 * intensity, 1, 0.5);
+        // Opdater gitterets bevægelse
+        const positions = grid.geometry.attributes.position.array;
+        const time = clock.elapsedTime;
+        const waveAmplitude = 0.5 + intensity; // Amplitude øges med intensiteten
+        const waveSpeed = 1 + intensity;       // Bølger ruller hurtigere med intensitet
 
-        // --- Pulseffekt ved kraftige trommeslag ---
+        for (let i = 0; i < positions.length; i += 3) {
+          const x = positions[i];
+          const y = positions[i + 1];
+          const frequency = dataArray[Math.floor((i / 3) % dataArray.length)];
+          positions[i + 2] = waveAmplitude * Math.sin(x * 2 + time * waveSpeed) * (frequency / 128) +
+                             waveAmplitude * Math.sin(y * 2 + time * waveSpeed) * (frequency / 128);
+        }
+        grid.geometry.attributes.position.needsUpdate = true;
+
+        // Opdater gitterets farver
+        const gridColors = grid.geometry.attributes.color.array;
+        for (let i = 0; i < gridColors.length / 3; i++) {
+          const frequency = dataArray[i % dataArray.length];
+          gridColors[i * 3] = frequency / 255;             // Rød komponent
+          gridColors[i * 3 + 1] = (255 - frequency) / 255; // Grøn komponent
+          gridColors[i * 3 + 2] = 0.5;                     // Blå komponent
+        }
+        grid.geometry.attributes.color.needsUpdate = true;
+
+        // --- Flash-effekt ved kraftige trommeslag ---
         if (avgFrequency > 200) {
           flashIntensity = 1;
-          backgroundColor.set(0xffffff); // Skift baggrunden til hvid
+          circles.forEach(circle => circle.material.color.setHSL(0.1, 1, 1)); // Skift cirkler til lysere farver
+          particles.material.opacity = 1; // Gør partikler helt synlige
         }
-
         flashIntensity *= 0.9; // Fade effekten
-        renderer.setClearColor(backgroundColor.clone().lerp(new THREE.Color(0x000000), 1 - flashIntensity), renderer.alpha);
+
+        // Forstærk lysstyrken på cirkler og partikler
+        circles.forEach(circle => {
+          circle.material.opacity *= flashIntensity;
+        });
+        particles.material.opacity *= flashIntensity;
+
+        // Ingen baggrundsfarve - behold AR passthrough
+        // Rendererens clear color er allerede sat til transparent i init()
       }
 
       renderer.render(scene, camera);
