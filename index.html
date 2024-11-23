@@ -188,10 +188,10 @@
 
         // Opdater cirkler
         circles.forEach((circle, index) => {
-          const scale = 1 + dataArray[index] / 64; // Øg skaleringen
+          const scale = 1 + dataArray[index % dataArray.length] / 64; // Øg skaleringen
           circle.scale.set(scale, scale, scale);
-          circle.material.opacity = dataArray[index] / 255;
-          circle.material.color.setHSL(dataArray[index] / 255, 1, 0.7); // Øg farvemætning
+          circle.material.opacity = dataArray[index % dataArray.length] / 255;
+          circle.material.color.setHSL(dataArray[index % dataArray.length] / 255, 1, 0.7); // Øg farvemætning
         });
 
         // Opdater partikler
@@ -233,16 +233,24 @@
         // --- Flash-effekt ved kraftige trommeslag ---
         if (avgFrequency > 200) {
           flashIntensity = 1;
-          circles.forEach(circle => circle.material.color.setHSL(0.1, 1, 1)); // Skift cirkler til lysere farver
+          circles.forEach(circle => circle.material.color.setHSL(0.1, 1, 1)); // Lysere farver på cirkler
           particles.material.opacity = 1; // Gør partikler helt synlige
         }
         flashIntensity *= 0.9; // Fade effekten
 
         // Forstærk lysstyrken på cirkler og partikler
         circles.forEach(circle => {
-          circle.material.opacity *= flashIntensity;
+          circle.material.opacity = Math.max(circle.material.opacity, 0.5); // Undgå nul opacitet
+          circle.material.opacity += (1 - circle.material.opacity) * flashIntensity * delta;
         });
-        particles.material.opacity *= flashIntensity;
+        particles.material.opacity = Math.max(particles.material.opacity, 0.5);
+        particles.material.opacity += (1 - particles.material.opacity) * flashIntensity * delta;
+
+        // Sikre, at opaciteten ikke falder til nul
+        circles.forEach(circle => {
+          circle.material.opacity = Math.min(circle.material.opacity, 1);
+        });
+        particles.material.opacity = Math.min(particles.material.opacity, 1);
 
         // Ingen baggrundsfarve - behold AR passthrough
         // Rendererens clear color er allerede sat til transparent i init()
