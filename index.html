@@ -164,14 +164,17 @@
 
       const gridColors = new Float32Array(gridGeometry.attributes.position.count * 3);
       for (let i = 0; i < gridColors.length; i += 3) {
-        gridColors[i] = 0.5;     // Initial R værdi
-        gridColors[i + 1] = 0.5; // Initial G værdi
-        gridColors[i + 2] = 0.5; // Initial B værdi
+        gridColors[i] = 0.0;     // Initial R værdi (mørkeblå)
+        gridColors[i + 1] = 0.0; // Initial G værdi
+        gridColors[i + 2] = 0.545; // Initial B værdi (#00008b)
       }
       gridGeometry.setAttribute('color', new THREE.BufferAttribute(gridColors, 3));
 
       grid = new THREE.Mesh(gridGeometry, gridMaterial);
-      grid.position.set(0, 0, -3); // 3 meter foran brugeren
+      grid.position.set(0, -1, -2); // Flyt gitteret tættere på brugeren
+      grid.scale.set(1.5, 1.5, 1.5); // Øg størrelsen til 150%
+      grid.rotation.x = Math.PI / 4; // Roter 45 grader omkring X-aksen
+      grid.rotation.z = Math.PI / 12; // Tilt 15 grader omkring Z-aksen
       scene.add(grid);
     }
 
@@ -208,15 +211,15 @@
         // Opdater gitterets bevægelse
         const positions = grid.geometry.attributes.position.array;
         const time = clock.elapsedTime;
-        const waveAmplitude = 0.5 + intensity; // Amplitude øges med intensiteten
-        const waveSpeed = 1 + intensity;       // Bølger ruller hurtigere med intensitet
+        const waveAmplitude = 1 + intensity; // Øget amplitude med intensitet
+        const waveSpeed = 1.5 + intensity;    // Hurtigere bevægelse ved høj intensitet
 
         for (let i = 0; i < positions.length; i += 3) {
           const x = positions[i];
           const y = positions[i + 1];
           const frequency = dataArray[Math.floor((i / 3) % dataArray.length)];
-          positions[i + 2] = waveAmplitude * Math.sin(x * 2 + time * waveSpeed) * (frequency / 128) +
-                             waveAmplitude * Math.sin(y * 2 + time * waveSpeed) * (frequency / 128);
+          positions[i + 2] = waveAmplitude * Math.sin(x * 3 + time * waveSpeed) * (frequency / 128) +
+                             waveAmplitude * Math.cos(y * 3 + time * waveSpeed) * (frequency / 128);
         }
         grid.geometry.attributes.position.needsUpdate = true;
 
@@ -224,9 +227,9 @@
         const gridColors = grid.geometry.attributes.color.array;
         for (let i = 0; i < gridColors.length / 3; i++) {
           const frequency = dataArray[i % dataArray.length];
-          gridColors[i * 3] = frequency / 255;             // Rød komponent
-          gridColors[i * 3 + 1] = (255 - frequency) / 255; // Grøn komponent
-          gridColors[i * 3 + 2] = 0.5;                     // Blå komponent
+          gridColors[i * 3] = 0.1 + 0.8 * (frequency / 255);                 // Rød komponent
+          gridColors[i * 3 + 1] = 0.1 + 0.5 * ((255 - frequency) / 255);     // Grøn komponent
+          gridColors[i * 3 + 2] = 0.4 + 0.6 * (frequency / 255);             // Blå komponent
         }
         grid.geometry.attributes.color.needsUpdate = true;
 
@@ -246,14 +249,11 @@
         particles.material.opacity = Math.max(particles.material.opacity, 0.5);
         particles.material.opacity += (1 - particles.material.opacity) * flashIntensity * delta;
 
-        // Sikre, at opaciteten ikke falder til nul
+        // Sikre, at opaciteten ikke overstiger 1
         circles.forEach(circle => {
           circle.material.opacity = Math.min(circle.material.opacity, 1);
         });
         particles.material.opacity = Math.min(particles.material.opacity, 1);
-
-        // Ingen baggrundsfarve - behold AR passthrough
-        // Rendererens clear color er allerede sat til transparent i init()
       }
 
       renderer.render(scene, camera);
