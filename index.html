@@ -2,12 +2,12 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>WebXR Musik Visualisering</title>
+  <title>WebXR Music Visualizer</title>
   <meta name='viewport' content='width=device-width, initial-scale=no'>
   <meta name='mobile-web-app-capable' content='yes'>
   <meta name='apple-mobile-web-app-capable' content='yes'>
   <style>
-    body { margin: 0; overflow: hidden; }
+    body { margin: 0; overflow: hidden; background-color: #0d1b2a; }
     #overlay {
       position: absolute;
       top: 10px;
@@ -16,8 +16,30 @@
       z-index: 1;
     }
     #start-button {
-      padding: 10px 20px;
-      font-size: 16px;
+      padding: 15px 30px;
+      font-size: 18px;
+      background-color: #ff0077;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    #start-button:hover {
+      background-color: #ff5599;
+    }
+    /* Loading screen */
+    #loading-screen {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #000000dd;
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
     }
   </style>
 </head>
@@ -25,61 +47,66 @@
   <div id="overlay">
     <button id="start-button">Start AR</button>
   </div>
+  <div id="loading-screen" style="display: none;">
+    <p>Loading...</p>
+  </div>
   <script type="module">
     import * as THREE from 'https://unpkg.com/three@0.150.1/build/three.module.js';
     import { ARButton } from 'https://unpkg.com/three@0.150.1/examples/jsm/webxr/ARButton.js';
+    import { EffectComposer } from 'https://unpkg.com/three@0.150.1/examples/jsm/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'https://unpkg.com/three@0.150.1/examples/jsm/postprocessing/RenderPass.js';
+    import { UnrealBloomPass } from 'https://unpkg.com/three@0.150.1/examples/jsm/postprocessing/UnrealBloomPass.js';
 
-    let camera, scene, renderer;
-    let circles = [];
-    let particles;
-    let grid;
-    let analyser;
-    let dataArray;
-    let clock = new THREE.Clock();
-    let flashIntensity = 0;
-
-    // Variabler til nye effekter
-    let shootingStars = [];
-    let shootingStarTimer = 0;
-    let fireworks = [];
-    let aurora;
-    let auroraTimer = 0;
-    let auroraVisible = false;
-    let lastPeakTime = 0;
+    let camera, scene, renderer, composer;
+    let visualizer, audioAnalyzer;
+    let loadingScreen = document.getElementById('loading-screen');
 
     init();
 
     function init() {
-      // Scene og kamera
+      // Show loading screen
+      loadingScreen.style.display = 'flex';
+
+      // Scene and camera
       scene = new THREE.Scene();
 
-      camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 50);
+      camera = new THREE.PerspectiveCamera(
+        70, window.innerWidth / window.innerHeight, 0.01, 50
+      );
 
       // Renderer
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.xr.enabled = true;
-      renderer.setClearColor(0x000000, 0); // Sæt baggrunden til transparent
+      renderer.setClearColor(0x000000, 0);
       document.body.appendChild(renderer.domElement);
 
-      // Lys
-      const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
-      light.position.set(0.5, 1, 0.25);
-      scene.add(light);
+      // Post-processing composer
+      composer = new EffectComposer(renderer);
+      composer.addPass(new RenderPass(scene, camera));
+      const bloomPass = new UnrealBloomPass(
+        new THREE.Vector2(window.innerWidth, window.innerHeight),
+        1.5, 0.4, 0.85
+      );
+      composer.addPass(bloomPass);
 
-      // Event listener for "Start AR"-knappen
+      // Event listener for "Start AR" button
       document.getElementById('start-button').addEventListener('click', () => {
         if (navigator.xr) {
           navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
             if (supported) {
-              const sessionInit = { optionalFeatures: ['dom-overlay'], domOverlay: { root: document.body } };
-              navigator.xr.requestSession('immersive-ar', sessionInit).then(onSessionStarted);
+              const sessionInit = {
+                optionalFeatures: ['dom-overlay'],
+                domOverlay: { root: document.body }
+              };
+              navigator.xr.requestSession('immersive-ar', sessionInit)
+                .then(onSessionStarted);
             } else {
-              alert('WebXR AR-session understøttes ikke på denne enhed.');
+              alert('WebXR AR session not supported on this device.');
             }
           });
         } else {
-          alert('WebXR ikke understøttet i denne browser.');
+          alert('WebXR not supported in this browser.');
         }
       });
     }
@@ -89,331 +116,171 @@
       renderer.xr.setSession(session);
       document.getElementById('start-button').style.display = 'none';
 
-      // Start animationssløjfen efter XR-sessionen er startet
+      // Hide loading screen
+      loadingScreen.style.display = 'none';
+
+      // Start animation loop after XR session starts
       renderer.setAnimationLoop(render);
 
-      // Opsæt lydanalyse
-      navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then((stream) => {
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        const source = audioContext.createMediaStreamSource(stream);
-        analyser = audioContext.createAnalyser();
-        analyser.fftSize = 256;
-        const bufferLength = analyser.frequencyBinCount;
-        dataArray = new Uint8Array(bufferLength);
-        source.connect(analyser);
-      });
+      // Initialize audio analyzer
+      audioAnalyzer = new AudioAnalyzer();
 
-      // Opret og placer objekter direkte foran brugeren
-      createObjects();
+      // Create visualizer
+      visualizer = new Visualizer(scene);
+
+      // Add ambient elements
+      visualizer.addAmbientElements();
     }
 
-    function createObjects() {
-      // Placeringsmatrix for objekterne
-      const position = new THREE.Vector3(0, 0, -2); // 2 meter foran brugeren
-      const quaternion = new THREE.Quaternion();
-      const scale = new THREE.Vector3(1, 1, 1);
-      const matrix = new THREE.Matrix4();
-      matrix.compose(position, quaternion, scale);
-
-      // Opret cirkler
-      for (let i = 1; i <= 5; i++) {
-        let geometry = new THREE.CircleGeometry(0.1 * i, 64);
-        let material = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, transparent: true });
-        let circle = new THREE.Mesh(geometry, material);
-
-        // Anvend matrixen for at placere cirklen
-        circle.applyMatrix4(matrix);
-
-        scene.add(circle);
-        circles.push(circle);
+    class AudioAnalyzer {
+      constructor() {
+        this.dataArray = null;
+        this.analyser = null;
+        this.initAudio();
       }
 
-      // Opret partikelsky
-      const particleCount = 1000;
-      const particlesGeometry = new THREE.BufferGeometry();
-      const positions = new Float32Array(particleCount * 3);
-      const colors = new Float32Array(particleCount * 3);
-
-      for (let i = 0; i < particleCount; i++) {
-        positions[i * 3] = (Math.random() - 0.5) * 4;
-        positions[i * 3 + 1] = (Math.random() - 0.5) * 4;
-        positions[i * 3 + 2] = (Math.random() - 0.5) * 4;
-
-        colors[i * 3] = 1.0;
-        colors[i * 3 + 1] = 1.0;
-        colors[i * 3 + 2] = 1.0;
+      initAudio() {
+        navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+          .then((stream) => {
+            const audioContext = new (window.AudioContext ||
+              window.webkitAudioContext)();
+            const source = audioContext.createMediaStreamSource(stream);
+            this.analyser = audioContext.createAnalyser();
+            this.analyser.fftSize = 512;
+            const bufferLength = this.analyser.frequencyBinCount;
+            this.dataArray = new Uint8Array(bufferLength);
+            source.connect(this.analyser);
+          });
       }
 
-      particlesGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      particlesGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-      const particlesMaterial = new THREE.PointsMaterial({
-        size: 0.03,
-        vertexColors: true,
-        transparent: true,
-        opacity: 0.8,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      });
-      particles = new THREE.Points(particlesGeometry, particlesMaterial);
-
-      // Anvend matrixen for at placere partikelskyen
-      particles.applyMatrix4(matrix);
-
-      scene.add(particles);
-
-      // Opret gitter
-      const gridGeometry = new THREE.PlaneGeometry(6, 6, 20, 20);
-      const gridMaterial = new THREE.MeshBasicMaterial({
-        wireframe: true,
-        transparent: true,
-        opacity: 0.5,
-        vertexColors: true,
-        side: THREE.DoubleSide,
-      });
-
-      const gridColors = new Float32Array(gridGeometry.attributes.position.count * 3);
-      for (let i = 0; i < gridColors.length; i += 3) {
-        gridColors[i] = 0.0;     // Initial R værdi (mørkeblå)
-        gridColors[i + 1] = 0.0; // Initial G værdi
-        gridColors[i + 2] = 0.545; // Initial B værdi (#00008b)
+      getFrequencyData() {
+        if (this.analyser) {
+          this.analyser.getByteFrequencyData(this.dataArray);
+          return this.dataArray;
+        }
+        return null;
       }
-      gridGeometry.setAttribute('color', new THREE.BufferAttribute(gridColors, 3));
-
-      grid = new THREE.Mesh(gridGeometry, gridMaterial);
-      grid.position.set(0, 0, -3); // 3 meter foran brugeren
-
-      // Rotér gitteret som ønsket
-      grid.rotation.x = Math.PI / 4;  // 45 grader omkring X-aksen
-      grid.rotation.z = Math.PI / 12; // 15 grader omkring Z-aksen
-
-      // Skaler gitteret
-      grid.scale.set(1.5, 1.5, 1.5); // Øg størrelsen til 150%
-
-      scene.add(grid);
     }
 
-    // Funktion til at skabe stjerneskud
-    function createShootingStars(intensity) {
-      const starCount = Math.floor(5 + intensity * 20); // Antal stjerner baseret på intensitet
-      for (let i = 0; i < starCount; i++) {
-        // Opret en plane-geometri for at repræsentere et stjerneskud
-        const geometry = new THREE.PlaneGeometry(0.02, 0.5);
-        const material = new THREE.MeshBasicMaterial({
-          color: new THREE.Color(1, 1, 1),
-          transparent: true,
-          opacity: 0.8,
-          side: THREE.DoubleSide,
-          blending: THREE.AdditiveBlending,
+    class Visualizer {
+      constructor(scene) {
+        this.scene = scene;
+        this.clock = new THREE.Clock();
+        this.objects = [];
+        this.initVisualizer();
+      }
+
+      initVisualizer() {
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        this.scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        directionalLight.position.set(0, 1, 0);
+        this.scene.add(directionalLight);
+
+        // Create morphing geometry
+        this.createMorphingSphere();
+
+        // Add starfield
+        this.createStarfield();
+      }
+
+      createMorphingSphere() {
+        const geometry = new THREE.IcosahedronGeometry(0.5, 5);
+        const material = new THREE.MeshStandardMaterial({
+          color: 0xffffff,
+          wireframe: true,
+          metalness: 0.5,
+          roughness: 0.2,
+          emissive: new THREE.Color(0x0d1b2a),
         });
-        const star = new THREE.Mesh(geometry, material);
-
-        // Startposition bag kameraet
-        star.position.set(
-          (Math.random() - 0.5) * 4, // Tilfældig x-position
-          (Math.random() - 0.5) * 4, // Tilfældig y-position
-          5 + Math.random() * 5      // Baggrunden
-        );
-
-        // Bevægelsesdata
-        const speed = 2 + intensity * 5;
-        star.userData.velocity = new THREE.Vector3(
-          0, // Ingen sidelæns bevægelse
-          0, // Ingen lodret bevægelse
-          -speed // Flyver fremad mod brugeren
-        );
-
-        // Tilfældig rotation
-        star.rotation.z = Math.random() * Math.PI * 2;
-
-        scene.add(star);
-        shootingStars.push(star);
+        this.sphere = new THREE.Mesh(geometry, material);
+        this.sphere.position.set(0, 0, -2);
+        this.scene.add(this.sphere);
+        this.objects.push(this.sphere);
       }
-    }
 
-    // Funktion til at skabe aurora borealis
-    function createAurora() {
-      const geometry = new THREE.PlaneGeometry(10, 5, 32, 32);
-      const material = new THREE.ShaderMaterial({
-        uniforms: {
-          time: { value: 0 },
-          intensity: { value: 0 },
-        },
-        vertexShader: `
-          varying vec2 vUv;
-          varying float vWave;
-          uniform float time;
-          uniform float intensity;
-          void main() {
-            vUv = uv;
-            vec3 pos = position;
-            float wave = sin(pos.x * 2.0 + time) * 0.5 * intensity;
-            pos.z += wave;
-            pos.y += sin(pos.x * 5.0 + time * 2.0) * 0.2 * intensity;
-            vWave = wave;
-            gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-          }
-        `,
-        fragmentShader: `
-          varying vec2 vUv;
-          varying float vWave;
-          uniform float intensity;
-          void main() {
-            float alpha = 0.5 + vWave;
-            vec3 color = vec3(0.0, 0.5 + intensity * 0.5, 1.0);
-            gl_FragColor = vec4(color, alpha);
-          }
-        `,
-        transparent: true,
-        blending: THREE.AdditiveBlending,
-        side: THREE.DoubleSide,
-      });
-      aurora = new THREE.Mesh(geometry, material);
-      aurora.position.set(0, 5, -10);
-      aurora.rotation.x = -Math.PI / 4;
-      scene.add(aurora);
+      createStarfield() {
+        const starsGeometry = new THREE.BufferGeometry();
+        const starVertices = [];
+        for (let i = 0; i < 10000; i++) {
+          starVertices.push(THREE.MathUtils.randFloatSpread(100)); // x
+          starVertices.push(THREE.MathUtils.randFloatSpread(100)); // y
+          starVertices.push(THREE.MathUtils.randFloatSpread(100)); // z
+        }
+        starsGeometry.setAttribute(
+          'position',
+          new THREE.Float32BufferAttribute(starVertices, 3)
+        );
+        const starsMaterial = new THREE.PointsMaterial({ color: 0x888888 });
+        const starField = new THREE.Points(starsGeometry, starsMaterial);
+        this.scene.add(starField);
+      }
+
+      addAmbientElements() {
+        // Additional ambient elements can be added here
+      }
+
+      update(dataArray) {
+        const delta = this.clock.getDelta();
+        const elapsedTime = this.clock.elapsedTime;
+
+        if (dataArray) {
+          // Analyze frequency bands
+          const lowerHalfArray = dataArray.slice(0, dataArray.length / 2 - 1);
+          const upperHalfArray = dataArray.slice(dataArray.length / 2 - 1);
+
+          const lowerAvg = this.avg(lowerHalfArray) / lowerHalfArray.length;
+          const upperAvg = this.avg(upperHalfArray) / upperHalfArray.length;
+
+          const lowerMax = Math.max(...lowerHalfArray) / lowerHalfArray.length;
+          const upperMax = Math.max(...upperHalfArray) / upperHalfArray.length;
+
+          const lowerFreq = lowerAvg + lowerMax;
+          const upperFreq = upperAvg + upperMax;
+
+          // Morph sphere geometry
+          this.morphSphere(this.sphere, lowerFreq, upperFreq);
+
+          // Update material color based on frequency
+          this.sphere.material.emissiveIntensity = upperFreq * 5;
+          this.sphere.material.emissive.setHSL(
+            0.6 - upperFreq * 0.6, 1, 0.5
+          );
+        }
+      }
+
+      avg(arr) {
+        return arr.reduce((sum, b) => sum + b, 0);
+      }
+
+      morphSphere(mesh, bassFrequency, trebleFrequency) {
+        mesh.geometry.vertices.forEach((vertex, i) => {
+          const offset = mesh.geometry.parameters.radius;
+          const amp = 0.5;
+          const time = this.clock.elapsedTime;
+          vertex.normalize();
+          const rf = 0.00001;
+          const distance =
+            offset +
+            bassFrequency * amp * Math.sin(rf * i + time) +
+            trebleFrequency * amp * Math.cos(rf * i + time);
+          vertex.multiplyScalar(distance);
+        });
+        mesh.geometry.verticesNeedUpdate = true;
+        mesh.geometry.normalsNeedUpdate = true;
+        mesh.geometry.computeVertexNormals();
+        mesh.geometry.computeFaceNormals();
+      }
     }
 
     function render() {
-      const delta = clock.getDelta();
-      const elapsedTime = clock.elapsedTime;
+      const dataArray = audioAnalyzer.getFrequencyData();
+      visualizer.update(dataArray);
 
-      if (analyser) {
-        analyser.getByteFrequencyData(dataArray);
-        const avgFrequency = dataArray.reduce((a, b) => a + b) / dataArray.length;
-        const intensity = avgFrequency / 255;
-
-        // --- Slow-motion effekt ---
-        const speedFactor = 0.5 + intensity;
-
-        // Opdater cirkler
-        circles.forEach((circle, index) => {
-          const freqIndex = index % dataArray.length;
-          const scale = 1 + dataArray[freqIndex] / 64; // Øg skaleringen
-          circle.scale.set(scale, scale, scale);
-          circle.material.opacity = Math.max(0.5, dataArray[freqIndex] / 255);
-          circle.material.color.setHSL(dataArray[freqIndex] / 255, 1, 0.7); // Øg farvemætning
-        });
-
-        // Opdater partikler
-        particles.rotation.y += 0.1 * delta * speedFactor;
-        const colors = particles.geometry.attributes.color.array;
-        for (let i = 0; i < colors.length / 3; i++) {
-          const pulse = 0.5 + 0.5 * Math.sin(elapsedTime * 5 + i);
-          colors[i * 3] = intensity * pulse; // Gør farver mere intense
-          colors[i * 3 + 1] = (1 - intensity) * pulse;
-          colors[i * 3 + 2] = 0.5 * pulse;
-        }
-        particles.geometry.attributes.color.needsUpdate = true;
-
-        // Opdater gitterets bevægelse
-        const positions = grid.geometry.attributes.position.array;
-        const time = elapsedTime;
-        const waveAmplitude = 1 + intensity; // Øget amplitude med intensitet
-        const waveSpeed = 1.5 + intensity;  // Hurtigere bevægelse ved høj intensitet
-
-        for (let i = 0; i < positions.length; i += 3) {
-          const x = positions[i];
-          const y = positions[i + 1];
-          const frequency = dataArray[Math.floor((i / 3) % dataArray.length)];
-          positions[i + 2] = waveAmplitude * Math.sin(x * 3 + time * waveSpeed) * (frequency / 128) +
-                             waveAmplitude * Math.cos(y * 3 + time * waveSpeed) * (frequency / 128);
-        }
-        grid.geometry.attributes.position.needsUpdate = true;
-
-        // Opdater gitterets farver
-        const gridColors = grid.geometry.attributes.color.array;
-        for (let i = 0; i < gridColors.length / 3; i++) {
-          const frequency = dataArray[i % dataArray.length];
-          gridColors[i * 3] = 0.1 + 0.8 * (frequency / 255);             // Rød komponent
-          gridColors[i * 3 + 1] = 0.1 + 0.5 * ((255 - frequency) / 255); // Grøn komponent
-          gridColors[i * 3 + 2] = 0.4 + 0.6 * (frequency / 255);         // Blå komponent
-        }
-        grid.geometry.attributes.color.needsUpdate = true;
-
-        // --- Gør gitterlinjerne tykkere ---
-        grid.material.wireframeLinewidth = 2; // Forsøg på at gøre linjerne tykkere
-
-        // --- Flash-effekt ved kraftige trommeslag ---
-        if (avgFrequency > 200) {
-          flashIntensity = 1;
-          circles.forEach(circle => circle.material.color.setHSL(0.1, 1, 1)); // Lysere farver på cirkler
-          particles.material.opacity = 1; // Gør partikler helt synlige
-
-          // Opret fyrværkeri
-          if (elapsedTime - lastPeakTime > 1) { // For at undgå for mange fyrværkerier
-            createFirework();
-            lastPeakTime = elapsedTime;
-          }
-
-          // Opret eksploderende partikler
-          createExplodingParticles();
-        }
-        flashIntensity *= 0.9; // Fade effekten
-
-        // Forstærk lysstyrken på cirkler og partikler
-        circles.forEach(circle => {
-          circle.material.opacity = Math.max(circle.material.opacity, 0.5); // Undgå nul opacitet
-          circle.material.opacity += (1 - circle.material.opacity) * flashIntensity * delta;
-          circle.material.opacity = Math.min(circle.material.opacity, 1);
-        });
-        particles.material.opacity = Math.max(particles.material.opacity, 0.5);
-        particles.material.opacity += (1 - particles.material.opacity) * flashIntensity * delta;
-        particles.material.opacity = Math.min(particles.material.opacity, 1);
-
-        // --- Stjerneskud ---
-        shootingStarTimer += delta;
-        if (shootingStarTimer >= 5) { // Hver 5. sekund
-          createShootingStars(intensity);
-          shootingStarTimer = 0;
-        }
-
-        // Opdater stjerneskud
-        for (let i = shootingStars.length - 1; i >= 0; i--) {
-          const star = shootingStars[i];
-          star.position.addScaledVector(star.userData.velocity, delta * speedFactor);
-
-          // Opdater opacitet baseret på position
-          star.material.opacity -= delta * 0.05;
-          if (star.material.opacity <= 0 || star.position.z < -5) {
-            // Fjern stjernen fra scenen og arrayet
-            scene.remove(star);
-            shootingStars.splice(i, 1);
-          }
-        }
-
-        // --- Aurora Borealis ---
-        auroraTimer += delta;
-        if (!auroraVisible && auroraTimer >= 60) {
-          createAurora();
-          auroraVisible = true;
-          auroraTimer = 0;
-        }
-        if (auroraVisible) {
-          aurora.material.uniforms.time.value = elapsedTime;
-          aurora.material.uniforms.intensity.value = intensity;
-          if (auroraTimer >= 50) {
-            scene.remove(aurora);
-            auroraVisible = false;
-            auroraTimer = 0;
-          }
-        }
-
-        // Ingen baggrundsfarve - behold AR passthrough
-      }
-
-      renderer.render(scene, camera);
-    }
-
-    // Funktion til at skabe fyrværkerieksplosioner
-    function createFirework() {
-      // Implementér fyrværkerieksplosioner her
-      // ... (som i tidligere kode)
-    }
-
-    // Funktion til at skabe eksploderende partikler
-    function createExplodingParticles() {
-      // Implementér eksploderende partikler her
-      // ... (som i tidligere kode)
+      // Render scene with composer
+      composer.render();
     }
   </script>
 </body>
